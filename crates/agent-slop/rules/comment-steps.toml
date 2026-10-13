@@ -1,0 +1,44 @@
+# slop/comment-steps — numbered step narration ("Step 1: fetch the token")
+# frozen into source. The steps restate the control flow the reader can
+# already follow; they rot the first time the order changes and teach the
+# next agent that narrating is wanted here.
+[meta]
+id = "comment-steps"
+severity = "warning"
+
+[match]
+# Anchored to the comment's start: step narration announces itself
+# ("Step 1:", "Шаг 2."), while protocol quotes cite the step mid-sentence
+# ("Wire step 2 of the handshake sends ACK") and stay out.
+anchored_markers = [
+  "step 1",
+  "step 2",
+  "step 3",
+  "step 4",
+  "step 5",
+  "step 6",
+  "step 7",
+  "step 8",
+  "шаг 1",
+  "шаг 2",
+  "шаг 3",
+  "шаг 4",
+  "шаг 5",
+  "шаг 6",
+  "шаг 7",
+  "шаг 8",
+  "этап 1",
+  "этап 2",
+  "этап 3",
+  "этап 4",
+  "этап 5",
+  "этап 6",
+  "этап 7",
+  "этап 8",
+]
+
+[exception]
+shape = "A protocol or spec quote whose numbering is external and load-bearing ('Wire step 2: the server sends ACK') — the numbers belong to the protocol, not to this code's control flow."
+
+[note]
+text = "Delete the numbering and keep only the non-obvious WHY of the step, if there is one. If the sequence itself is the information, extract a named function per step so the call site reads as the sequence."

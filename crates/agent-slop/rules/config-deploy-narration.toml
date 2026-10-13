@@ -1,0 +1,69 @@
+# slop/config-deploy-narration — a comment narrating deployment or
+# environment mechanics the service cannot see: where a secret comes
+# from, how compose resolves an env file, which unit creates the shared
+# database, why this port number. The deployed artefact has no say in any
+# of it; the reader who needs it reads the deploy repo, not the source.
+[meta]
+id = "config-deploy-narration"
+severity = "warning"
+
+[match]
+phrases = [
+  "comes from vault",
+  "vault side",
+  "from the deploy",
+  "deploy repo",
+  "the deploy pipeline",
+  "helm chart",
+  "helmfile",
+  "kustomize overlay",
+  "service dns",
+  "chain to the ready",
+  "chains to the ready",
+  "avoids the port",
+  "port clash",
+  "port conflict",
+  "env_prefix",
+  "reads flat env",
+  "flat env names",
+  "separate from the deploy",
+  "write-only for",
+  "exports the file",
+  "docker compose -f",
+  "docker-compose -f",
+  "docker-compose.yml",
+  "docker-compose.yaml",
+  "compose file for",
+  "compose file at",
+  "ключ приходит",
+  "приходит из vault",
+  "из vault",
+  "отдельно от выката",
+  "отдельно от деплоя",
+  "репозиторий деплоя",
+  "деплой репозиторий",
+  "цепляется к готовым",
+  "цепляется к готовому",
+  "подключается к готовым",
+  "избегает порта",
+  "конфликта портов",
+  "столкновения портов",
+  "читает плоские",
+  "плоские имена",
+  "ходит по dns",
+  "по service dns",
+  "как api ходит",
+  "как api заходит",
+  "общий compose",
+  "готовую базу",
+  "готовые сервисы",
+  "создаёт только",
+  "создает только",
+]
+word_boundaries = true
+
+[exception]
+shape = "A comment that ties ONE named value to its deploy consequence inside the file that owns the value ('API_PORT is baked into the image, so the compose mapping must match'): the mechanics are the contract of this key."
+
+[note]
+text = "Deployment mechanics belong next to the deployment (compose/helm comments live in the deploy repo) or in a runbook with a referent. In source, keep only what the running code itself enforces."

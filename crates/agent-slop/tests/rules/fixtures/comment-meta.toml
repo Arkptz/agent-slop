@@ -1,0 +1,53 @@
+# Fixtures for slop/comment-meta (warning; was error until 2026-10-03). Harvested positives with
+# path:line provenance; negatives are real comments the rule must NOT flag.
+[[case]]
+expect = "hit"
+lang = "python"
+provenance = "external corpus: .../services/model_config.py:830"
+source = '''
+# Always paid for now — billing calibration TBD (JS shows preview+fast unlimited
+'''
+
+[[case]]
+expect = "hit"
+lang = "nix"
+provenance = "hosts/aorus-Desktop/default.nix:598"
+source = '''
+# does NOT re-manage that infra. Serial-only for now: maxConcurrentNodes = 1.
+'''
+
+[[case]]
+expect = "hit"
+lang = "python"
+provenance = "external corpus: .../src/app/schemas/images.py:166"
+source = '''
+# credits_used опущен по требованию
+'''
+
+[[case]]
+expect = "hit"
+lang = "python"
+provenance = "external corpus: .../scripts/update_sdk.py:12"
+source = '''
+# and in the sentinel frame HTML; auto-extraction is out of scope for now.
+'''
+
+# --- negative cases ---
+
+[[case]]
+expect = "miss"
+lang = "python"
+provenance = "external corpus: .../services/protected_transport.py:215"
+source = '''
+# and the subdomains are different origins, so the Referer header is
+'''
+note = "explains a browser constraint; no session-residue phrasing."
+
+[[case]]
+expect = "miss"
+lang = "rust"
+provenance = "pkgs/agent-slop/src/finding.rs:73 (marker strip comment)"
+source = '''
+/// Returns the payload and whether a block form was opened: the closing
+'''
+note = "documents current behaviour with no deferral marker."

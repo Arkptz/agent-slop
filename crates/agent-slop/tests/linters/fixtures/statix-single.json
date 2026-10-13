@@ -1,0 +1,38 @@
+{
+  "file": "one.nix",
+  "report": [
+    {
+      "note": "Assignment instead of inherit from",
+      "code": 4,
+      "severity": "Warn",
+      "diagnostics": [
+        {
+          "at": {
+            "from": {
+              "line": 1,
+              "column": 3
+            },
+            "to": {
+              "line": 1,
+              "column": 11
+            }
+          },
+          "message": "This assignment is better written with `inherit`",
+          "suggestion": {
+            "at": {
+              "from": {
+                "line": 1,
+                "column": 3
+              },
+              "to": {
+                "line": 1,
+                "column": 11
+              }
+            },
+            "fix": "inherit (x) a;"
+          }
+        }
+      ]
+    }
+  ]
+}

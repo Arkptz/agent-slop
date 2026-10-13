@@ -1,0 +1,2 @@
+{"file":"a.nix","results":[{"column":3,"endColumn":9,"line":2,"message":"Unused let binding: unused"}]}
+{"file":"b.nix","results":[{"column":3,"endColumn":8,"line":2,"message":"Unused let binding: dead2"}]}

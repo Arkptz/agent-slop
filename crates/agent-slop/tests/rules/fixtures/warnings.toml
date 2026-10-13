@@ -1,0 +1,132 @@
+# Fixtures for the warning-level families. SPEC-006 lets these ship on
+# author-written fixtures (they cannot block), harvested where available.
+[[case]]
+family = "todo-no-condition"
+expect = "hit"
+lang = "nix"
+provenance = "pkgs/cura5.nix:79"
+source = '''
+# TODO: Extract cura-icon from AppImage source.
+'''
+
+[[case]]
+family = "todo-no-condition"
+expect = "miss"
+lang = "nix"
+provenance = "pkgs/default.nix:101"
+source = '''
+# TODO: drop this override once nixpkgs ships mcp-grafana >= 0.16 (the pin
+'''
+note = "'once nixpkgs ships >= 0.16' names the removal condition."
+
+[[case]]
+family = "comment-paraphrase"
+expect = "hit"
+lang = "rust"
+provenance = "author-written (warning rule; SPEC-006 allows)"
+source = '''
+// Iterate over the users and filter the active users list
+fn iterate_and_filter_users() {}
+'''
+
+[[case]]
+family = "comment-paraphrase"
+expect = "miss"
+lang = "rust"
+provenance = "pkgs/update-pkgs/src/ports.rs:237 (comment text; neighbouring code replaced)"
+source = '''
+# not by default. Without it, a renamed GitHub repo (301) yields the
+'''
+note = "explains a constraint; no identifier overlap with the statement below."
+
+[[case]]
+family = "perf-claim"
+expect = "hit"
+lang = "rust"
+provenance = "author-written (warning rule; SPEC-006 allows)"
+source = '''
+// This is significantly faster than the old version.
+'''
+
+[[case]]
+family = "perf-claim"
+expect = "miss"
+lang = "python"
+provenance = "external corpus: .../src/utils/check_limits.py:772"
+source = '''
+# H3 at 2K: ceil(0.13 * duration / 0.28)
+'''
+note = "carries its own numbers."
+
+[[case]]
+family = "unsourced-constraint"
+expect = "hit"
+lang = "python"
+provenance = "author-written (warning rule; SPEC-006 allows)"
+source = '''
+# Some providers reject this payload format.
+'''
+
+[[case]]
+family = "unsourced-constraint"
+expect = "miss"
+lang = "python"
+provenance = "external corpus: .../src/services/errors.py:147"
+source = '''
+# Production logs: "No valid characters detected in the image/video"
+'''
+note = "names its source (production logs, verbatim text)."
+
+[[case]]
+family = "manual-ddl"
+expect = "hit"
+lang = "python"
+provenance = "gpt4telegram PR #428 yota-bot/database/models/message.py:68"
+source = '''
+# TODO: вручную ALTER TABLE services ADD COLUMN transactid VARCHAR(64) NULL;
+transactid = fields.CharField(max_length=64, null=True)
+'''
+
+[[case]]
+family = "manual-ddl"
+expect = "hit"
+lang = "python"
+provenance = "gpt4telegram PR #425 gpt-mj/src/database/models/seedance_videos.py:40"
+source = '''
+# TODO(manual migration): ALTER TABLE seedance_videos
+#   ADD COLUMN video_task VARCHAR(16) NULL, ALGORITHM=INSTANT
+video_task = fields.CharField(max_length=16, null=True)
+'''
+
+[[case]]
+family = "manual-ddl"
+expect = "miss"
+lang = "nix"
+provenance = "modules/nixos/services/lobechat.nix:202"
+source = '''
+# LobeChat's drizzle migration does `CREATE TABLE IF NOT EXISTS "drizzle"."__drizzle_migrations"`
+# then selects from it, so the schema must exist before the first start.
+{ }
+'''
+note = "describes SQL a tool runs itself; no TODO marker and no 'manually'."
+
+[[case]]
+family = "bare-reference"
+expect = "hit"
+lang = "typescript"
+provenance = "gpt4telegram PR #438 front-end/apps/click-click/src/shared/analytics/model/events.ts:256"
+source = '''
+// Step-by-step generation (KAN-621)
+export const x = 1;
+'''
+
+[[case]]
+family = "bare-reference"
+expect = "miss"
+lang = "python"
+provenance = "gpt4telegram PR #435 proxy-pool/packages/server/src/proxy_server/settings.py:20"
+source = '''
+# Креды провайдеров лежат в БД только зашифрованными, ключ — Fernet (ADR-003).
+fernet_key: str
+'''
+note = "states the rule in its own words and keeps the id in parentheses."

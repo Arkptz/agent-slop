@@ -1,0 +1,24 @@
+{}
+{
+	"slopvet": {
+		"copylocks": [
+			{
+				"posn": "main.go:15:8",
+				"end": "main.go:15:9",
+				"message": "call of other copies lock value: slopvet.T contains sync.Mutex"
+			},
+			{
+				"posn": "main.go:18:14",
+				"end": "main.go:18:15",
+				"message": "other passes lock by value: slopvet.T contains sync.Mutex"
+			}
+		],
+		"printf": [
+			{
+				"posn": "main.go:12:2",
+				"end": "main.go:12:30",
+				"message": "fmt.Printf call needs 1 arg but has 2 args"
+			}
+		]
+	}
+}

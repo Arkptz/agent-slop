@@ -1,0 +1,66 @@
+# slop/comment-paraphrase — the comment restates the statement below it.
+# Detected structurally: the comment's tokens are compared against the
+# neighbouring AST node's identifiers (src/rules/paraphrase.rs), NOT against
+# a phrase list — the whole reason this engine is ast-grep-based.
+[meta]
+id = "comment-paraphrase"
+severity = "warning"
+
+[match]
+# Structural rule; the thresholds live in the matcher.
+min_shared_identifiers = 2
+min_comment_words = 3
+# Comment tokens that never count towards the overlap.
+stopwords = [
+  "the", "a", "an", "this", "that", "of", "to", "for", "and", "or", "is",
+  "are", "was", "in", "on", "it", "its", "with", "as", "by", "be", "we",
+  "get", "set", "return", "returns", "check", "checks", "if", "then",
+  "value", "values", "list", "map", "string", "number", "int",
+]
+# A Russian comment restating an English identifier ("порт сервиса" over
+# `port:`) shares no tokens with it. These pairs translate the overlap back;
+# a comment whose words map onto the identifiers below is a restatement.
+ru_glossary = [
+  "порт", "port", "сервис", "service", "сервер", "server", "сеть", "network",
+  "ключ", "key", "путь", "path", "файл", "file", "каталог", "directory",
+  "пользователь", "user", "пароль", "password", "токен", "token",
+  "список", "list", "очередь", "queue", "таймер", "timer", "время", "time",
+  "дата", "date", "имя", "name", "группа", "group", "хост", "host",
+  "версия", "version", "запрос", "request", "ответ", "response",
+  "прокси", "proxy", "домен", "domain", "база", "database", "таблица", "table",
+  "модель", "model", "режим", "mode", "уровень", "level", "лимит", "limit",
+  "включ", "enable", "выключ", "disable", "проверка", "check",
+  "кэш", "cache", "журнал", "log", "поток", "thread", "задача", "task",
+  "ссылка", "url", "секция", "section", "значение", "value", "доступ", "access",
+]
+
+# A comment containing one of these (or a referent: URL, decision-doc id,
+# issue ref, path) states a cause or a consequence and is never a
+# restatement. Trailing `*` is a stem.
+why_markers = [
+  "because", "otherwise", "since", "due to", "so that", "without", "unless",
+  "breaks", "fails", "else", "instead of", "requires", "would",
+  "иначе", "из-за", "потому что", "так как", "чтобы", "без", "ломает*",
+  "падает", "упад*", "требует", "вместо",
+]
+
+# Carve-outs (FINDINGS.md §10.2): a why about what this module cannot
+# know — deploy mechanics, another service's internals, permission to
+# exist — was flagged by reviewers regardless of its why-content. When a
+# why-marked comment matches one of these, the why exemption is
+# cancelled and the overlap verdict stands.
+why_exemption_cancels = [
+  "comes from vault", "from the deploy", "deploy repo", "helm chart",
+  "avoids the port", "port clash", "chains to the ready", "env_prefix",
+  "reads flat env", "as a last resort", "deliberately", "by design",
+  "intentional", "allowed here", "rpc boundary", "architecture:",
+  "приходит из vault", "из vault", "цепляется к готовым", "избегает порта",
+  "конфликта портов", "читает плоские", "как api ходит", "намеренно",
+  "так задумано", "импорт допустим", "граница rpc",
+]
+
+[exception]
+shape = "A comment whose overlap with the identifiers below explains WHY the code is shaped that way (a constraint the code cannot express), not WHAT the code does. 'Why' comments are the point of commenting."
+
+[note]
+text = "Delete the restatement — the code already says it. Keep the comment only if it states a constraint the code cannot (why this shape, what breaks otherwise); rewrite it in those terms."

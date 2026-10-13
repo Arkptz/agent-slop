@@ -1,0 +1,17 @@
+# slop/comment-language — comments not in the configured language.
+# Ships OFF: enabled per project by setting `language` in `.agent-hooks.toml`
+# (SPEC-006 "The v1 blocking set"). The variant (ru/en) stays out of the
+# rule id; which set matched goes in the message.
+[meta]
+id = "comment-language"
+severity = "off"
+
+[match]
+# Detection is script-based (Cyrillic codepoints vs ASCII letters ratio),
+# not a phrase list; see src/rules/language.rs.
+
+[exception]
+shape = "Identifiers, quoted error text, and proper nouns in the other language are content, not prose. The detector scores whole comments, not individual tokens."
+
+[note]
+text = "Write the comment in the project's configured language; quoted strings, identifiers and path names in their original language are fine."

@@ -1,0 +1,58 @@
+# slop/self-justification — a comment that argues the code is allowed to
+# exist ("import is fine — RPC boundary", "ARCHITECTURE:", "deliberately",
+# "not a layer violation"). The justification belongs in the review that
+# approved it or the decision doc; in source it answers a question nobody
+# asked and rots when the boundary moves.
+[meta]
+id = "self-justification"
+severity = "warning"
+
+[match]
+# Label and predicate forms only. The bare adverbs (deliberately, on
+# purpose, by design, намеренно) are how legitimate English engineering
+# prose introduces a why ("No default on purpose: `?` makes compose
+# refuse to start") — flagging them buried config_v3 in false
+# positives. The corpus offenders were labels ("# ARCHITECTURE:",
+# "импорт допустим") and predicated permission ("так задумано").
+phrases = [
+  "import is allowed",
+  "import is fine",
+  "import is safe",
+  "imports are fine",
+  "this import is",
+  "the import is",
+  "not a layer violation",
+  "not a violation",
+  "no layer violation",
+  "not a leak",
+  "this is intentional",
+  "this is deliberate",
+  "allowed here",
+  "permissible here",
+  "rpc boundary",
+  "rpc-boundary",
+  "rpc граница",
+  "rpc-граница",
+  "граница rpc",
+  "архитектурно допустимо",
+  "архитектуре допустимо",
+  "импорт допустим",
+  "импорт разреш",
+  "это не протечка",
+  "не протечка",
+  "не нарушение сло",
+  "так задумано",
+  "сделано специально",
+  "специально так",
+  "допустимо, так как",
+  "допустимо потому",
+  "обоснование:",
+  "оправдание",
+]
+word_boundaries = true
+
+[exception]
+shape = "A comment that names the constraint a reviewer must verify alongside the permission ('imports worker only through the taskiq RPC proxy — see ADR-021 for the boundary'): the referent and the rule are stated, not just the permission."
+
+[note]
+text = "State the constraint, not the permission: what the code may NOT do and where the boundary is decided (referent to the doc). If the rule is obvious from the import graph, delete the comment."

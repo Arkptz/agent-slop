@@ -1,0 +1,147 @@
+{
+  "file": "../sub/q.nix",
+  "report": [
+    {
+      "note": "Assignment instead of inherit from",
+      "code": 4,
+      "severity": "Warn",
+      "diagnostics": [
+        {
+          "at": {
+            "from": {
+              "line": 1,
+              "column": 11
+            },
+            "to": {
+              "line": 1,
+              "column": 19
+            }
+          },
+          "message": "This assignment is better written with `inherit`",
+          "suggestion": {
+            "at": {
+              "from": {
+                "line": 1,
+                "column": 11
+              },
+              "to": {
+                "line": 1,
+                "column": 19
+              }
+            },
+            "fix": "inherit (z) c;"
+          }
+        }
+      ]
+    }
+  ]
+}
+{
+  "file": "../one.nix",
+  "report": [
+    {
+      "note": "Assignment instead of inherit from",
+      "code": 4,
+      "severity": "Warn",
+      "diagnostics": [
+        {
+          "at": {
+            "from": {
+              "line": 1,
+              "column": 3
+            },
+            "to": {
+              "line": 1,
+              "column": 11
+            }
+          },
+          "message": "This assignment is better written with `inherit`",
+          "suggestion": {
+            "at": {
+              "from": {
+                "line": 1,
+                "column": 3
+              },
+              "to": {
+                "line": 1,
+                "column": 11
+              }
+            },
+            "fix": "inherit (x) a;"
+          }
+        }
+      ]
+    }
+  ]
+}
+{
+  "file": "../sub/p.nix",
+  "report": [
+    {
+      "note": "Assignment instead of inherit from",
+      "code": 4,
+      "severity": "Warn",
+      "diagnostics": [
+        {
+          "at": {
+            "from": {
+              "line": 1,
+              "column": 3
+            },
+            "to": {
+              "line": 1,
+              "column": 11
+            }
+          },
+          "message": "This assignment is better written with `inherit`",
+          "suggestion": {
+            "at": {
+              "from": {
+                "line": 1,
+                "column": 3
+              },
+              "to": {
+                "line": 1,
+                "column": 11
+              }
+            },
+            "fix": "inherit (x) a;"
+          }
+        }
+      ]
+    },
+    {
+      "note": "Assignment instead of inherit from",
+      "code": 4,
+      "severity": "Warn",
+      "diagnostics": [
+        {
+          "at": {
+            "from": {
+              "line": 1,
+              "column": 12
+            },
+            "to": {
+              "line": 1,
+              "column": 20
+            }
+          },
+          "message": "This assignment is better written with `inherit`",
+          "suggestion": {
+            "at": {
+              "from": {
+                "line": 1,
+                "column": 12
+              },
+              "to": {
+                "line": 1,
+                "column": 20
+              }
+            },
+            "fix": "inherit (y) b;"
+          }
+        }
+      ]
+    }
+  ]
+}

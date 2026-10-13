@@ -1,0 +1,49 @@
+# Fixtures for slop/review-jargon (warning; was error until 2026-10-03). The harvested corpus freezes review
+# FINDING LABELS (M-01, P2-6, F5) into code comments — review vocabulary
+# addressed to the reader of a session that is over. Positives carry
+# path:line provenance; negatives are real comments with the same letters
+# in ordinary-word positions.
+[[case]]
+expect = "hit"
+lang = "typescript"
+provenance = "external corpus: .../src/app/login/__tests__/copy.test.ts:15 (commit c36e85fcd, 2026-08-28), label shortened"
+source = '''
+// M-01: survived OAuth.
+'''
+note = "review-finding label frozen into a test comment; the reader it addresses left with the review."
+
+[[case]]
+expect = "miss"
+lang = "typescript"
+provenance = "exarch crates/exarchd/src/store/mod.rs:317 (2026-09-25, telemetry run): the same shape demoted"
+source = '''
+// R5-2: run-scope is unsupported for a `delegate_agent` grant.
+'''
+note = "a label naming the review round, prefixing a self-sufficient sentence; the sentence carries the fact, the label only points at the round. Re-classified from a hit by the label-vs-explanation split."
+
+[[case]]
+expect = "hit"
+lang = "typescript"
+provenance = "external corpus: .../src/shared/hooks/__tests__/use-media-upload.test.ts:125 (commit 0d9d09a14, 2026-08-30), label shortened"
+source = '''
+// P2-6: итог 12
+'''
+note = "the label is the whole message: nothing after it states the fact, so the id is all a future reader gets."
+
+[[case]]
+expect = "miss"
+lang = "typescript"
+provenance = "external corpus: .../src/widgets/Notifications/Notifications.tsx:47 (a neighbouring comment)"
+source = '''
+// The editor runs its own M-04 with the retry branch — two windows for one
+'''
+note = "M-04 mid-prose is not a review marker per the corpus anchoring — but see the ambiguity note: mid-sentence review labels are the boundary of this rule and are excluded by the anchored-match design."
+
+[[case]]
+expect = "miss"
+lang = "python"
+provenance = "external corpus: .../src/services/routers/video.py:448"
+source = '''
+# Корруптная task.duration — fail loud (раньше silent fallback на 5s
+'''
+note = "history narration, not review vocabulary; belongs to comment-history, not this rule."

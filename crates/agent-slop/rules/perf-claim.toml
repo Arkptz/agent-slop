@@ -1,0 +1,38 @@
+# slop/perf-claim — a speed/efficiency claim with no number and no
+# measurement method. "Faster" than what, by how much, measured how?
+[meta]
+id = "perf-claim"
+severity = "warning"
+
+[match]
+phrases = [
+  "faster than",
+  "much faster",
+  "significantly faster",
+  "way faster",
+  "blazingly fast",
+  "highly optimized",
+  "heavily optimized",
+  "optimal path",
+  "zero-copy",
+  "constant time",
+  "linear time",
+  "O(1)",
+  "avoids a copy",
+  "avoids allocation",
+  "no allocations",
+  "cache-friendly",
+  "performance critical",
+  "гораздо быстрее",
+  "значительно быстрее",
+  "быстрее, чем",
+]
+# A trailing digit or a comparator with a named second term makes the claim
+# measurable; a bare adjective does not.
+requires_no_digit = true
+
+[exception]
+shape = "A claim carrying its own evidence: a number, a benchmark name, a big-O with the variable, or a comparator naming the alternative ('cheaper than a fresh parse, bench in #123')."
+
+[note]
+text = "Cite the measurement (number, bench, issue) or drop the adjective — an unverifiable perf claim is marketing copy that survives refactors that invalidate it."

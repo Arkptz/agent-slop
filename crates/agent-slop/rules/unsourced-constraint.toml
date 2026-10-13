@@ -1,0 +1,39 @@
+# slop/unsourced-constraint — an external constraint with no source: "some
+# providers require", "due to a bug", "old versions break", without naming
+# which provider, which bug, which version.
+[meta]
+id = "unsourced-constraint"
+severity = "warning"
+
+[match]
+phrases = [
+  "some providers",
+  "some servers",
+  "some clients",
+  "some libraries",
+  "some systems",
+  "certain providers",
+  "some versions",
+  "older versions",
+  "old versions",
+  "due to a bug",
+  "because of a bug",
+  "a known bug",
+  "upstream bug",
+  "browser bug",
+  "known issue",
+  "по некоторым",
+  "из-за бага",
+  "старые версии",
+  "некоторые серверы",
+  "некоторые провайдеры",
+]
+# A version number, URL, issue ref or product name in the comment counts as
+# a source; the phrases above only fire without one.
+requires_no_referent = true
+
+[exception]
+shape = "The constraint carries its source: a product+version, an issue URL, an RFC section. 'Some providers reject X (Fastly bug #412, fixed 2026-03)' is a fact; 'some providers reject X' is a rumour."
+
+[note]
+text = "Name the source — which provider, which bug tracker entry, which version. If you cannot name it, you do not know it is true; delete the comment or mark it as hypothesis with its referent."

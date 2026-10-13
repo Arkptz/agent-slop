@@ -1,0 +1,27 @@
+# slop/todo-no-condition — TODO/FIXME/XXX/HACK with no removal condition.
+# A TODO that cannot be checked is a wish, not debt: nothing can ever close
+# it and nothing can ever be held to it.
+[meta]
+id = "todo-no-condition"
+severity = "warning"
+
+[match]
+markers = ["TODO", "FIXME", "XXX", "HACK"]
+# A condition is any of: a reference (issue, doc id, URL, version), a
+# temporal bound ("until X", "before X", "after X", "once X"), or a named
+# actor/owner. Without one of these shapes the marker fires.
+condition_patterns = [
+  "#\\d+",
+  "(?i)(ADR|POL|SPEC|INC|TASK)-\\d+",
+  "https?://",
+  "(?i)\\b(until|before|after|once|when)\\b",
+  "(?i)\\b(v?\\d+\\.\\d+)\\b",
+  "(?i)\\bblocked on\\b",
+  "(?i)\\bимя|до |после ",
+]
+
+[exception]
+shape = "A marker that names its removal condition — an issue ref, a version gate, an event ('until the v2 endpoint ships, owner/repo#123'). The most common family in live code, which is exactly why it stays a warning."
+
+[note]
+text = "Name the condition that makes the TODO closable ('drop when nixpkgs ships >= 0.16') or delete the marker — an unclosable TODO is noise you are asking every future reader to re-triage."

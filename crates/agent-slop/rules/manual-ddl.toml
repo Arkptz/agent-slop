@@ -1,0 +1,29 @@
+# slop/manual-ddl — a schema change left as a TODO or 'run manually' note in
+# the source. The note is invisible to the deploy, so the column or table it
+# describes exists only where someone remembered to run it, and the comment
+# outlives the migration by months.
+[meta]
+id = "manual-ddl"
+severity = "warning"
+
+[match]
+markers = ["TODO", "FIXME", "XXX", "HACK"]
+# Wording that marks the DDL as a step for a human rather than a quote.
+phrases = ["вручную", "ручная миграция", "ручной миграции", "manual migration", "manually", "run by hand"]
+ddl = [
+  "alter table",
+  "rename table",
+  "create table",
+  "drop table",
+  "add column",
+  "drop column",
+  "modify column",
+  "create index",
+  "drop index",
+]
+
+[exception]
+shape = "A comment explaining SQL a tool or library runs itself ('the migrator does CREATE TABLE IF NOT EXISTS first'), not a step someone has to perform."
+
+[note]
+text = "Put the schema change where the deploy runs it — a migration file, or the schema generator when the table is new — and describe the rollout in the PR or runbook, not in the model."

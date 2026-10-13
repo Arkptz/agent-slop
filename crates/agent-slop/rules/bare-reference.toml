@@ -1,0 +1,18 @@
+# slop/bare-reference — a ticket or decision-doc id standing in for the
+# explanation: "(KAN-621)", "see POL-002". The reader who does not open the
+# tracker learns nothing, and the id breaks when the doc moves.
+[meta]
+id = "bare-reference"
+severity = "warning"
+
+[match]
+# Fires when the comment has an id and fewer than this many words of its own.
+min_comment_words = 4
+# Uppercase-dash-number tokens that name standards or encodings, not docs.
+stopwords = ["UTF", "SHA", "ISO", "RFC", "CVE", "PEP", "HTTP", "TLS", "AES", "MD", "IPV", "X", "BT", "ECMA", "IEEE", "WCAG", "RS"]
+
+[exception]
+shape = "An id inside a sentence that already states the rule in its own words ('keys are Fernet-encrypted at rest (ADR-003)')."
+
+[note]
+text = "State the rule or decision in your own words and keep the id in parentheses after it: the id links code to doc, the words let the reader skip the doc."

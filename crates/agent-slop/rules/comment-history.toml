@@ -1,0 +1,83 @@
+# slop/comment-history — a comment narrating the change rather than the code.
+#
+# Matches change-history residue: "previously X", "renamed from Y", "used to
+# return Z", "no longer W". The history of a line lives in git; the comment
+# that restates it rots the moment the next edit lands and teaches the next
+# agent to write more of it.
+[meta]
+id = "comment-history"
+severity = "error"
+
+[match]
+# Order matters for the message: the first matching phrase names the finding.
+phrases = [
+  "previously",
+  "used to be",
+  "used to return",
+  "used to do",
+  "renamed from",
+  "renamed to",
+  "no longer",
+  "was renamed",
+  "formerly known as",
+  "old name:",
+  "больше не",
+  "раньше был",
+  "раньше была",
+  "раньше было",
+  "раньше здесь",
+  # "раньше + demonstrative" always narrates the past state whatever the
+  # verb is ("Раньше этот импорт ронял бота") — the stem lists below cover
+  # the no-determiner shapes.
+  "раньше этот",
+  "раньше эта",
+  "раньше это",
+  "раньше эти",
+  "раньше тот",
+  "раньше такая",
+  "раньше такой",
+  "раньше так",
+  "ранее здесь",
+  "переименова*",
+  "раньше возвраща*",
+  "раньше возвращал*",
+  "раньше вызыва*",
+  "раньше использова*",
+  "раньше хран*",
+  "раньше жил*",
+  "раньше лежал*",
+  "раньше дела*",
+  "раньше шл*",
+  "раньше писал*",
+  "раньше отдава*",
+  "раньше ронял*",
+  "раньше падал*",
+  "раньше ломал*",
+  "раньше срабатыва*",
+  "раньше создавал*",
+  "раньше существова*",
+  "раньше наход*",
+  "ранее возвраща*",
+  "ранее использова*",
+  "теперь вместо",
+  "вынесено из",
+  "перенесено из",
+  "перенесён из",
+  # Dashed diff-residue banners: "--- original 6 tests ---" marks which
+  # half of the working tree the block came from; the merged file has no
+  # halves. The bare word "original" stays legal (an original source,
+  # the original request).
+  "--- original",
+  "--- стар",
+  "--- было",
+]
+# A trailing `*` makes the phrase a stem (Russian inflections).
+# Whole-word matching for the bare-word phrases. Matching is always
+# case-insensitive: the matcher lowercases both sides (src/rules/lex.rs).
+word_boundaries = true
+
+[exception]
+shape = "A migration or compatibility shim whose behaviour DEPENDS on the old state — the comment documents a live data/format conversion, not the edit history. Name the owning decision doc to suppress."
+
+[note]
+text = "Delete the narration; the history lives in git blame. If the code genuinely branches on the old state, say so in terms of the data (\"payloads before v2 lack `kind`\"), not of the edit."

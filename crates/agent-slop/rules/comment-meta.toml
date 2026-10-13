@@ -1,0 +1,46 @@
+# slop/comment-meta — process residue addressed to the reader of a session
+# rather than of the code: "as requested", "for now", "left as-is".
+# A deferral without an owner is a decision nobody can audit.
+[meta]
+id = "comment-meta"
+# Demoted error → warning 2026-10-03, on the TASK-019 harvest: 28 firings
+# across 2026-09-25..10-03 with zero would_block, and the phrase list
+# ("пока не", "на время") also matches ordinary Russian prose about
+# timing. Promote back only with a suppression ratio under 5 %.
+severity = "warning"
+
+[match]
+phrases = [
+  "for now",
+  "as requested",
+  "as discussed",
+  "as per your",
+  "per your request",
+  "left as-is",
+  "left as is",
+  "left unchanged for",
+  "temporarily disabled",
+  "temporarily commented",
+  "по требованию",
+  "по запросу",
+  "пока так",
+  "пока не",
+  "пока остав*",
+  "пока что",
+  "на время",
+  "временно отключ*",
+  "временно закомментир*",
+  "как договорились",
+  "как просил*",
+  "по просьбе",
+  "по твоей просьбе",
+  "по вашей просьбе",
+]
+# A trailing `*` makes the phrase a stem (Russian inflections).
+word_boundaries = true
+
+[exception]
+shape = "A comment naming the decision document that owns the deferral (ADR/POL/SPEC/INC/TASK id, an issue ref, or a date-scoped rollback window). The deferral is owned, not orphaned."
+
+[note]
+text = "Replace the session-residue with the durable fact, or delete it. 'For now' must become 'until <referent>' — see the exception shape; anything else is a promise with no owner."

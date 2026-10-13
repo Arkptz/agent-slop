@@ -1,0 +1,40 @@
+# slop/review-jargon — review vocabulary frozen into the source: "nit:",
+# "LGTM", "addressed feedback". The review is over; its residue addresses a
+# reader who no longer exists.
+[meta]
+id = "review-jargon"
+# Demoted error → warning 2026-10-03, on the TASK-019 harvest: the highest
+# error-rule firing count in the window (615 occurrences, 275 of them in
+# Stop rows) with the whole-window blocking evidence concentrated in the
+# 2026-09-22..24 rule-churn days — none since. Promote back only with a
+# suppression ratio under 5 %.
+severity = "warning"
+
+[match]
+# Anchored markers (comment start + optional label prefix), not substring
+# matches: "digital" must never trip "nit", "everything" must never trip
+# "LGTM". `LABEL:` — review-finding ids frozen into code (M-01:, P2-6:,
+# F5:) — is the measured shape in the harvested corpus, hence the explicit
+# label arm.
+anchored_markers = [
+  "label:",
+  "nit:",
+  "nits:",
+  "nit.",
+  "lgtm",
+  "ptal",
+  "addressed feedback",
+  "addressed review",
+  "addressed the feedback",
+  "per review",
+  "review feedback:",
+  "исправлено по ревью",
+  "правки по ревью",
+  "по замечанию",
+]
+
+[exception]
+shape = "Prose where the token is an ordinary word rather than a review marker — e.g. 'the digital readout' (contains no standalone 'nit:'), or domain text genuinely discussing a review process in third person, not addressing its reader."
+
+[note]
+text = "Delete the marker; the code and its tests are the answer to the review. If the outcome of a review round is a durable constraint, state the constraint itself with its referent, not the fact that a review happened."

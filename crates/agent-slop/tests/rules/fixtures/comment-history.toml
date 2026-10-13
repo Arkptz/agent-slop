@@ -1,0 +1,71 @@
+# Fixtures for slop/comment-history (error).
+#
+# POSITIVE cases are harvested from real code, with path:line provenance
+# recorded in the `provenance` field (POL-026 rule 3: the oracle must not be
+# derived from the subject). NEGATIVE cases are real comments the rule must
+# NOT flag, from the same corpora.
+[[case]]
+expect = "hit"
+lang = "python"
+provenance = "external corpus: .../services/protected_transport.py:217"
+source = '''
+# stripped entirely. We previously always sent a Referer — that was a
+'''
+
+[[case]]
+expect = "hit"
+lang = "python"
+provenance = "external corpus: .../src/services/errors.py:150"
+source = '''
+# was previously falling through to state=50 because of the more
+'''
+
+[[case]]
+expect = "hit"
+lang = "nix"
+provenance = "modules/home/roles/desktop.nix:48"
+source = '''
+# Granular modules (previously hardcoded packages)
+graphics.enable = true;
+'''
+
+[[case]]
+expect = "hit"
+lang = "nix"
+provenance = "modules/nixos/roles/desktop.nix:56"
+source = '''
+noto-fonts-color-emoji # renamed from noto-fonts-emoji
+'''
+
+# Boundary: fires BY DESIGN and is the documented exception shape (a
+# regression guard whose behaviour depends on the old state) — the case a
+# human answers with a suppression naming the owning test, exactly what the
+# `exception` field declares.
+[[case]]
+expect = "hit"
+lang = "typescript"
+provenance = "external corpus: .../src/app/__tests__/model/pricing.test.ts:61"
+source = '''
+// The regression this guards: subscriptions used to be read as [0] and [1],
+'''
+note = "fires on 'used to be'; this is the exception shape from rules/comment-history.toml — the suppression carries the referent."
+
+# --- negative cases: real comments that narrate data or behaviour, not edits ---
+
+[[case]]
+expect = "miss"
+lang = "typescript"
+provenance = "external corpus: .../src/lib/logger.ts:72"
+source = '''
+// track-event endpoint removed — clear buffer to prevent unbounded growth
+'''
+note = "'removed' narrates the code's present behaviour, not the edit that produced it."
+
+[[case]]
+expect = "miss"
+lang = "python"
+provenance = "external corpus: .../services/dubbing.py:77"
+source = '''
+# previously-generated videos). Caller must pass a real video-job id.
+'''
+note = "'previously-generated' is an adjective on data (videos generated earlier), not the edit history of this line."

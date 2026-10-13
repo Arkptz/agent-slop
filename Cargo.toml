@@ -13,7 +13,6 @@ repository = ""
 # Single place for cross-crate dependency versions. Members reference these with
 # `dep.workspace = true` so the whole workspace stays on one version.
 [workspace.dependencies]
-app-core = { path = "crates/core" }
 
 # Workspace-wide lints — inherited by each crate via `[lints] workspace = true`.
 [workspace.lints.rust]

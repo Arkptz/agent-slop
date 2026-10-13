@@ -1,0 +1,27 @@
+# slop/rejected-alternative — a comment defining the code by what it is not:
+# "X, not Y", "а не Y", "instead of Y". The rejected Y is not in the code, so
+# the comment describes a state the reader cannot see. Ships OFF: in this
+# repo about one comment in ten has the shape, many of them deliberate; a
+# project whose rules forbid it enables the family in `.agent-hooks.toml`.
+[meta]
+id = "rejected-alternative"
+severity = "off"
+
+[match]
+word_boundaries = true
+phrases = [
+  "а не",
+  "вместо",
+  "вместо того чтобы",
+  "instead of",
+  "rather than",
+]
+# A negation right after a clause break (", не …", ": not …", "— not …")
+# is the same contrast without the connective.
+contrast_negations = ["не", "not"]
+
+[exception]
+shape = "The negation carries a distinguishing fact the reader needs ('the discriminator is the key, not an empty data field'), or states a test's contract ('the server refuses rather than tunnelling directly')."
+
+[note]
+text = "State the current behaviour and its reason affirmatively: not 'cut at the cap, not checked after reading: the body comes from a foreign server' but 'reading stops at the cap: the body size comes from a foreign server'."

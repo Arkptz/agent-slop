@@ -1,0 +1,171 @@
+# Corpus-research batch (FINDINGS.md §3, §9): harvested positives from
+# gpt4 PR review remarks (path + reviewer date as provenance) and real
+# negatives. comment-hedging/steps positives are provenance-backed by
+# vibecheck ai-tells.ts patterns (FINDINGS.md §9) — no gpt4 reviewer hit
+# yet, which is why both ship at warning.
+
+[[case]]
+family = "comment-hedging"
+expect = "hit"
+lang = "python"
+provenance = "vibecheck src/rules/ai-tells.ts no-hedging-comments (FINDINGS.md §9)"
+source = '''
+# This should work for most cases, but might need adjustment later.
+VALUE = 1
+'''
+
+[[case]]
+family = "comment-hedging"
+expect = "hit"
+lang = "python"
+provenance = "vibecheck no-hedging-comments, RU spelling"
+source = '''
+# Вроде работает, но не уверен, что это лучший вариант.
+VALUE = 1
+'''
+
+[[case]]
+family = "comment-hedging"
+expect = "miss"
+lang = "python"
+provenance = "verified fact, no doubt expressed"
+source = '''
+# The retry budget is 3 because the upstream 429 window is 10s (measured 2026-08).
+VALUE = 3
+'''
+
+[[case]]
+family = "comment-steps"
+expect = "hit"
+lang = "python"
+provenance = "vibecheck no-step-comments (FINDINGS.md §9)"
+source = '''
+# Step 1: parse the token, then refresh if expired.
+VALUE = parse_token()
+'''
+
+[[case]]
+family = "comment-steps"
+expect = "hit"
+lang = "python"
+provenance = "vibecheck no-step-comments, RU spelling"
+source = '''
+# Шаг 2: сохраняем результат в базу.
+VALUE = save()
+'''
+
+[[case]]
+family = "comment-steps"
+expect = "miss"
+lang = "python"
+provenance = "protocol numbering is external, not control flow"
+source = '''
+# Wire step 2 of the handshake: the server sends ACK before the payload.
+VALUE = ack()
+'''
+
+[[case]]
+family = "docstring-restates-name"
+expect = "hit"
+lang = "python"
+provenance = "gpt4 PR420 higgsfield.py — vlad200ok 'нейрокоммент про питон' (FINDINGS.md §3 id 7)"
+source = '''
+"""
+Провайдер эффектов Higgsfield: адаптер к DoP-пресетам и эффектам viral hub Higgsfield.
+"""
+class HiggsfieldEffectsProvider:
+    pass
+'''
+
+[[case]]
+family = "docstring-restates-name"
+expect = "miss"
+lang = "python"
+provenance = "gpt4 flux_video/handlers.py id 11 — flow narration ('becomes input to'), only partial name overlap; the engine deliberately fires on head-is-name only (FINDINGS.md §11 open item)"
+source = '''
+def seed_result_state(state):
+    """Готовый результат становится входом продления или редактирования результата."""
+    return state
+'''
+
+[[case]]
+family = "docstring-restates-name"
+expect = "miss"
+lang = "python"
+provenance = "PEP 257 kos_root: earns the line by saying where it reads from"
+source = '''
+def kos_root():
+    """Return the pathname of the KOS root directory."""
+    return _kos_root
+'''
+
+[[case]]
+family = "docstring-restates-name"
+expect = "miss"
+lang = "python"
+provenance = "conventional Go-style heading at min_comment_words — idiom, not slop"
+source = '''
+# Parse request
+def parse_request(payload):
+    return payload
+'''
+
+[[case]]
+family = "self-justification"
+expect = "hit"
+lang = "python"
+provenance = "gpt4 PR350 chat.py — vlad200ok 'нейрокоммент с оправданиями' (FINDINGS.md §3 id 26)"
+source = '''
+# Импорт из hive_worker — RPC-граница: вызовы taskiq/DI-контейнера по имени, не нарушение слоёв.
+from hive_worker import queue
+'''
+
+[[case]]
+family = "self-justification"
+expect = "hit"
+lang = "python"
+provenance = "gpt4 PR350 app.py — '# ARCHITECTURE: ... импорт допустим' (FINDINGS.md §3 id 24)"
+source = '''
+# ARCHITECTURE: hive_api to hive_worker import is allowed here — RPC boundary.
+from hive_worker import queue
+'''
+
+[[case]]
+family = "self-justification"
+expect = "miss"
+lang = "python"
+provenance = "names the constraint and its decision doc, not bare permission"
+source = '''
+# imports worker only through the taskiq RPC proxy; direct calls are banned by ADR-021
+from worker_proxy import send
+'''
+
+[[case]]
+family = "config-deploy-narration"
+expect = "hit"
+lang = "yaml"
+provenance = "gpt4 PR435 docker-compose.captcha.yml — vlad200ok 'нейрокоммент ни о чем' (FINDINGS.md §3 id 1)"
+source = '''
+# Ключ приходит из Vault отдельно от выката сервиса.
+api_key: ""
+'''
+
+[[case]]
+family = "config-deploy-narration"
+expect = "hit"
+lang = "yaml"
+provenance = "gpt4 PR350 docker-compose.gpt-hive.yml — 'бессмысленный полностью' (FINDINGS.md §3 id 30)"
+source = '''
+# Hive Settings читает плоские имена env (env_prefix=""): контракт — AWS_*/
+aws_key: ""
+'''
+
+[[case]]
+family = "config-deploy-narration"
+expect = "miss"
+lang = "yaml"
+provenance = "ties one named value to its own contract, not deploy topology"
+source = '''
+# API_PORT is baked into the image, so the compose mapping must match it
+api_port: 8000
+'''

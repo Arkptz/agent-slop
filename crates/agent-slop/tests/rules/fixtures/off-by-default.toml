@@ -1,0 +1,12 @@
+# Families that ship `off`: the built-in tier must report nothing on their
+# positives. The enabled behaviour is covered by unit tests in src/rules/mod.rs.
+[[case]]
+family = "rejected-alternative"
+expect = "miss"
+lang = "python"
+provenance = "gpt4telegram PR #435 proxy-pool/packages/server/src/proxy_server/routes/v1/bindings.py:80"
+source = '''
+# По два count-запроса на элемент enum вместо group-by: эндпоинт низкочастотный, цена не важна.
+counts = {}
+'''
+note = "a positive for the family, silent because it ships off."

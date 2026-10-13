@@ -1,0 +1,65 @@
+# slop/docstring-restates-name — a docstring or heading comment whose
+# content is already the name below it: `def get_user_name:` documented as
+# "Get the user name". The reader who parsed the name learned nothing; the
+# line exists only because the writer was told to write a docstring.
+[meta]
+id = "docstring-restates-name"
+severity = "warning"
+
+[match]
+# Token-overlap against the following code identifiers, engine-shared
+# with comment-paraphrase (src/rules/paraphrase.rs). This section holds
+# the calibration knobs.
+min_shared_identifiers = 2
+# A docstring must be strictly longer than this many substantive words
+# to be judged; at or below it the comment is a conventional heading and
+# a heading equal to the name is idiomatic (Go doc comments open with
+# the name).
+min_comment_words = 2
+# Head-detection guard: the clause before the first colon must have at
+# least this many substantive words to count as a definition slot at
+# all — "Parse request:" with two is the Go-style idiom, three words
+# ("Provider of Higgsfield effects:") is already prose restating.
+min_head_words = 3
+# Grammar glue and generic type words carry no content; dropping them is
+# what makes "ALL substantive words == name" a meaningful verdict.
+stopwords = [
+  "the", "a", "an", "this", "that", "these", "those", "of", "to", "for",
+  "and", "or", "is", "are", "was", "in", "on", "it", "its", "with", "as",
+  "by", "be", "we", "you", "via", "from", "into", "onto", "over", "at",
+  "get", "set", "return", "returns", "returned", "check", "checks",
+  "if", "then", "else", "when", "while", "new", "create", "creates",
+  "handle", "handles", "used", "uses", "using", "use", "given", "one",
+  "value", "values", "list", "map", "string", "number", "int", "type",
+  "py", "ts", "rs", "nix", "api", "cli",
+  "данный", "данная", "данного", "для", "и", "или", "не", "на", "в", "из",
+  "с", "со", "к", "по", "за", "от", "до", "это", "этот", "эта", "эти",
+  "как", "что", "чтобы", "при", "после", "перед", "над", "под", "без",
+  "новый", "новая", "новое", "возвращает", "возвращает",
+  "создаёт", "создает", "получает", "получить", "обрабатывает",
+  "используется", "используется", "для", "работы", "работа",
+]
+# The same RU→EN vocabulary that lets comment-paraphrase judge Russian
+# comments against English identifiers.
+ru_glossary = [
+  "порт", "port", "сервис", "service", "сервер", "server", "сеть", "network",
+  "ключ", "key", "путь", "path", "файл", "file", "каталог", "directory",
+  "пользователь", "user", "пароль", "password", "токен", "token",
+  "список", "list", "очередь", "queue", "таймер", "timer", "время", "time",
+  "дата", "date", "имя", "name", "группа", "group", "хост", "host",
+  "версия", "version", "запрос", "request", "ответ", "response",
+  "прокси", "proxy", "домен", "domain", "база", "database", "таблица", "table",
+  "модель", "model", "режим", "mode", "уровень", "level", "лимит", "limit",
+  "включ", "enable", "выключ", "disable", "проверка", "check",
+  "кэш", "cache", "журнал", "log", "поток", "thread", "задача", "task",
+  "ссылка", "url", "секция", "section", "значение", "value", "доступ", "access",
+  "клиент", "client", "провайдер", "provider", "эффект", "effect",
+  "адаптер", "adapter", "пресет", "preset", "генерация", "generation",
+  "изображение", "image", "видео", "video", "аудио", "audio",
+]
+
+[exception]
+shape = "A docstring that restates the name AND adds one non-obvious fact (a constraint, a unit, a side effect, an error case) — 'Return the pathname of the KOS root' earns its line by saying where it reads from. Public-API doc comments conventionally begin with the name (Go); the rule fires on name-only content, not on the convention."
+
+[note]
+text = "Either delete the line or earn it: one non-obvious fact the name cannot carry — a unit, a side effect, an error case, a constraint with a source. If the only content is the name, the name was the documentation."
