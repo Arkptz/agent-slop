@@ -1,6 +1,6 @@
 //! agent-slop — CLI dispatch (SPEC-006 "CLI surface and exit codes").
 //! The exit-code contract this module owns: scan 0/1/3, check always 0,
-//! PostToolUse always 0, Stop 0-or-2, 3 only for CLI usage errors. The
+//! `PostToolUse` always 0, Stop 0-or-2, 3 only for CLI usage errors. The
 //! binary never exits nonzero on an internal error, which is what makes
 //! the hook wrapper's "anything outside {0,2} means it crashed, so allow"
 //! rule safe.
@@ -9,6 +9,11 @@ mod cli;
 mod hook;
 mod ratchet;
 mod scan;
+
+/// Milliseconds since `started`, saturating at `u64::MAX`.
+fn elapsed_ms(started: Instant) -> u64 {
+    u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
+}
 
 use agent_slop_core::{config, finding, rules};
 use agent_slop_integrations::{judge, telemetry};
@@ -60,7 +65,7 @@ fn run_scan(args: &ScanArgs) -> ExitCode {
     let cwd = std::env::current_dir().unwrap_or_default();
     let started = std::time::Instant::now();
     let report = scan::run(&cfg, args, &cwd, true);
-    let duration_ms = started.elapsed().as_millis() as u64;
+    let duration_ms = elapsed_ms(started);
     let fail_on = args.fail_on.unwrap_or(FailOn::Never);
     let tripped = report.findings.iter().any(|f| fail_on.trips(f.severity));
 
@@ -75,7 +80,13 @@ fn run_scan(args: &ScanArgs) -> ExitCode {
     for line in scan::render(
         &report,
         fmt,
-        &judge::annotate(&cfg, &report.findings, &cwd, deadline_of(&cfg, args), args.max_verdicts),
+        &judge::annotate(
+            &cfg,
+            &report.findings,
+            &cwd,
+            deadline_of(&cfg, args),
+            args.max_verdicts,
+        ),
     ) {
         out(&line);
     }
@@ -92,7 +103,13 @@ fn run_scan(args: &ScanArgs) -> ExitCode {
                 .map(|base| (repo.root, base))
         });
         if let Some((root, base)) = base {
-            for hit in judge::audit_needs(&cfg, &root, &base, args.max_verdicts, deadline_of(&cfg, args)) {
+            for hit in judge::audit_needs(
+                &cfg,
+                &root,
+                &base,
+                args.max_verdicts,
+                deadline_of(&cfg, args),
+            ) {
                 out(&hit.render());
             }
         }
@@ -181,7 +198,9 @@ fn run_explain(rule_id: &str) -> ExitCode {
                      URL, ADR-064, owner/repo#1, path/to/it, date:2026-09-21>"
                 ));
             } else {
-                out("  imported rules suppress via their own linter mechanism (noqa, allow, disable)");
+                out(
+                    "  imported rules suppress via their own linter mechanism (noqa, allow, disable)",
+                );
             }
         }
         None => out(&format!(

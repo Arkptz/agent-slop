@@ -1,11 +1,11 @@
 //! End-to-end telemetry cover: the built binary's own hook legs against a
-//! scratch git repository, and the row put through the SessionEnd rewrite
+//! scratch git repository, and the row put through the `SessionEnd` rewrite
 //! filter that the shipped recorder actually runs.
 //!
 //! The unit tests in `src/telemetry.rs` assert the row's shape. What only
 //! an end-to-end run can show is that a row is written at all, by the real
 //! process, and that the consumer does not delete it again: the recorder's
-//! SessionEnd leg rewrites the shard keyed on `harness × session_id`, and
+//! `SessionEnd` leg rewrites the shard keyed on `harness × session_id`, and
 //! before the carve-out landed that rewrite dropped every row this
 //! producer wrote (SPEC-006, "Telemetry row").
 
@@ -46,8 +46,7 @@ impl Scratch {
         );
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map(|d| d.subsec_nanos())
-            .unwrap_or(0);
+            .map_or(0, |d| d.subsec_nanos());
         let root = std::env::temp_dir().join(format!(
             "agent-slop-tel-{name}-{}-{nanos}",
             std::process::id()
@@ -278,7 +277,7 @@ fn post_tool_use_records_the_file_it_advised_on() {
     assert!(items(&rows[0]).contains(&"slop/comment-history".to_string()));
 }
 
-/// The exact jq program the recorder runs at SessionEnd, read out of the
+/// The exact jq program the recorder runs at `SessionEnd`, read out of the
 /// shipped script rather than restated here — a restatement would pass
 /// while the script that actually runs deletes the rows.
 fn carve_out_filter() -> String {

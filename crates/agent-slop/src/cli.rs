@@ -9,11 +9,11 @@ use std::path::PathBuf;
 use agent_slop_core::finding::Severity;
 
 /// Exit code for a usage error (SPEC-006 "CLI surface and exit codes").
-pub const EXIT_USAGE: u8 = 3;
+pub(crate) const EXIT_USAGE: u8 = 3;
 
 /// The usage text is the spec's fenced block, verbatim: it is the
 /// published surface, not prose about it.
-pub fn usage() -> String {
+pub(crate) fn usage() -> String {
     "\
 agent-slop scan [PATHS...]
     --since <ref>                       scan only files changed since merge-base(ref, HEAD), ratchet against it
@@ -43,7 +43,7 @@ agent-slop self-test           embedded fixtures; 0 | 1    ← POL-026 evidence"
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Format {
+pub(crate) enum Format {
     Human,
     Json,
     Jsonl,
@@ -51,7 +51,7 @@ pub enum Format {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FailOn {
+pub(crate) enum FailOn {
     Error,
     Warning,
     Hint,
@@ -61,7 +61,7 @@ pub enum FailOn {
 impl FailOn {
     /// `never` is satisfied by nothing, so a scan with the default
     /// threshold always exits 0.
-    pub fn trips(self, severity: Severity) -> bool {
+    pub(crate) fn trips(self, severity: Severity) -> bool {
         match self {
             FailOn::Error => severity == Severity::Error,
             FailOn::Warning => matches!(severity, Severity::Error | Severity::Warning),
@@ -72,7 +72,7 @@ impl FailOn {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct ScanArgs {
+pub(crate) struct ScanArgs {
     pub paths: Vec<String>,
     pub since: Option<String>,
     /// `None`: human on tty, json otherwise — the SPEC-006 default.
@@ -100,7 +100,7 @@ pub struct ScanArgs {
     pub telemetry_root: Option<PathBuf>,
 }
 
-pub enum Cli {
+pub(crate) enum Cli {
     /// `scan`, and also the bare invocation: no subcommand is a scan of
     /// the whole repo, the common human-shell case.
     Scan(ScanArgs),
@@ -126,7 +126,7 @@ pub enum Cli {
 /// Parse `std::env::args()`. Exits 0 on `--help`/`-h`, 3 on a usage
 /// error. Never returns an `Err`: usage errors exit directly, matching
 /// the miner's pattern.
-pub fn parse() -> Cli {
+pub(crate) fn parse() -> Cli {
     let mut args = std::env::args().skip(1);
     let Some(cmd) = args.next() else {
         return Cli::Scan(ScanArgs::default());
@@ -167,19 +167,22 @@ fn parse_scan(args: &mut impl Iterator<Item = String>) -> ScanArgs {
             "--no-rules" => o.no_rules = Some(comma_list(&value(args, "--no-rules"))),
             "--linters" => o.linters = Some(value(args, "--linters")),
             "--comment-lang" => {
-                o.comment_lang = Some(parse_comment_lang(&value(args, "--comment-lang")))
+                o.comment_lang = Some(parse_comment_lang(&value(args, "--comment-lang")));
             }
             "--strict-suppressions" => o.strict_suppressions = true,
             "--no-cache" => o.no_cache = true,
             "--deadline-ms" => {
-                o.deadline_ms = Some(parse_u64(&value(args, "--deadline-ms"), "--deadline-ms"))
+                o.deadline_ms = Some(parse_u64(&value(args, "--deadline-ms"), "--deadline-ms"));
             }
             "--max-verdicts" => {
-                o.max_verdicts = Some(parse_u64(&value(args, "--max-verdicts"), "--max-verdicts") as usize)
+                o.max_verdicts = Some(
+                    usize::try_from(parse_u64(&value(args, "--max-verdicts"), "--max-verdicts"))
+                        .unwrap_or(usize::MAX),
+                );
             }
             "--emit-telemetry" => o.emit_telemetry = true,
             "--telemetry-root" => {
-                o.telemetry_root = Some(PathBuf::from(value(args, "--telemetry-root")))
+                o.telemetry_root = Some(PathBuf::from(value(args, "--telemetry-root")));
             }
             "--help" | "-h" => {
                 print!("{}", usage());

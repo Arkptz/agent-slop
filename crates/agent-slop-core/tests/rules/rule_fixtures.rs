@@ -44,7 +44,7 @@ fn load_all() -> BTreeMap<String, Vec<Case>> {
             .unwrap_or_else(|e| panic!("parse {}: {e}", path.display()));
         for case in file.cases {
             let family = if case.family.is_empty() {
-                path.file_stem().unwrap().to_string_lossy().to_string()
+                path.file_stem().expect("fixture file name").to_string_lossy().to_string()
             } else {
                 case.family.clone()
             };

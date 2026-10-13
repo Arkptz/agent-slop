@@ -1,9 +1,9 @@
-//! Hook dispatch (SPEC-006 "CLI surface and exit codes", "The PostToolUse
+//! Hook dispatch (SPEC-006 "CLI surface and exit codes", "The `PostToolUse`
 //! advisory channel", "Payload key spellings", "Stop dispatch
 //! preconditions").
 //!
 //! Every field is declared with both harness spellings: grok's envelope is
-//! camelCase where Claude Code's is snake_case, and a parse written for
+//! camelCase where Claude Code's is `snake_case`, and a parse written for
 //! one reads `null` under the other — a hook that reports healthy while
 //! scanning nothing.
 //!
@@ -20,9 +20,11 @@ use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 
+use crate::elapsed_ms;
+
+use crate::ratchet::{self, Cache, Repo};
 use agent_slop_core::config::{self, ResolvedConfig};
 use agent_slop_core::finding::{Finding, Severity};
-use crate::ratchet::{self, Cache, Repo};
 use agent_slop_core::rules::{corpus::Corpus, scan_source};
 use agent_slop_integrations::telemetry::{self, RowInput};
 
@@ -41,7 +43,7 @@ const PER_RULE_CEILING: usize = 5;
 /// whole parse fails, `dispatch` takes the error branch, and every leg becomes
 /// a silent no-op at exit 0 on the harness the aliases were added for.
 #[derive(Debug, Default, Deserialize)]
-pub struct ToolInput {
+pub(crate) struct ToolInput {
     #[serde(default)]
     pub file_path: Option<String>,
     #[serde(default, rename = "filePath")]
@@ -57,7 +59,7 @@ impl ToolInput {
 }
 
 #[derive(Debug, Default, Deserialize)]
-pub struct HookPayload {
+pub(crate) struct HookPayload {
     #[serde(default)]
     pub hook_event_name: Option<String>,
     #[serde(default, rename = "hookEventName")]
@@ -97,7 +99,7 @@ impl HookPayload {
     /// `hookEventName` carries grok's own `post_tool_use` — so the caller
     /// compares through [`event_is`], which is blind to that difference.
     #[cfg(test)]
-    pub fn event(&self) -> &str {
+    pub(crate) fn event(&self) -> &str {
         self.hook_event_name
             .as_deref()
             .or(self.hook_event_name_camel.as_deref())
@@ -108,7 +110,7 @@ impl HookPayload {
     /// separators)? Compares BOTH fields, because only one of grok's two may
     /// be the vocabulary this binary knows, and folds away case and the
     /// underscores that make `post_tool_use` differ from `PostToolUse`.
-    pub fn event_is(&self, want: &str) -> bool {
+    pub(crate) fn event_is(&self, want: &str) -> bool {
         [
             self.hook_event_name.as_deref(),
             self.hook_event_name_camel.as_deref(),
@@ -118,23 +120,23 @@ impl HookPayload {
         .any(|name| squash(name) == want)
     }
 
-    pub fn stop_hook_active(&self) -> Option<bool> {
+    pub(crate) fn stop_hook_active(&self) -> Option<bool> {
         self.stop_hook_active.or(self.stop_hook_active_camel)
     }
 
-    pub fn session_id(&self) -> Option<&str> {
+    pub(crate) fn session_id(&self) -> Option<&str> {
         self.session_id
             .as_deref()
             .or(self.session_id_camel.as_deref())
     }
 
-    pub fn subagent_type(&self) -> Option<&str> {
+    pub(crate) fn subagent_type(&self) -> Option<&str> {
         self.subagent_type
             .as_deref()
             .or(self.subagent_type_camel.as_deref())
     }
 
-    pub fn file_path(&self) -> Option<&str> {
+    pub(crate) fn file_path(&self) -> Option<&str> {
         self.tool_input
             .as_ref()
             .and_then(ToolInput::path)
@@ -157,7 +159,7 @@ fn squash(s: &str) -> String {
 /// built but not written — [`run`] is the only place that touches disk,
 /// and its absence is how "this leg did not scan" is asserted.
 #[derive(Debug, Default)]
-pub struct Outcome {
+pub(crate) struct Outcome {
     pub code: u8,
     pub stdout: Vec<String>,
     pub stderr: Vec<String>,
@@ -171,7 +173,7 @@ impl Outcome {
 }
 
 /// Read stdin, dispatch, write, and return the process exit code.
-pub fn run() -> u8 {
+pub(crate) fn run() -> u8 {
     let mut buf = String::new();
     if std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf).is_err() {
         return 0; // unreadable stdin carries no event
@@ -192,7 +194,7 @@ pub fn run() -> u8 {
     outcome.code
 }
 
-pub fn dispatch(payload_text: &str, cwd: &std::path::Path) -> Outcome {
+pub(crate) fn dispatch(payload_text: &str, cwd: &std::path::Path) -> Outcome {
     // A payload with no recognisable shape is not an error.
     let Ok(payload) = serde_json::from_str::<HookPayload>(payload_text) else {
         return Outcome::allow();
@@ -261,7 +263,7 @@ fn post_tool_use(cfg: &ResolvedConfig, payload: &HookPayload, cwd: &std::path::P
         blocked: false,
         would_block: false,
         files_scanned: 1,
-        duration_ms: started.elapsed().as_millis() as u64,
+        duration_ms: elapsed_ms(started),
         linters: BTreeMap::new(),
     });
 
@@ -276,7 +278,13 @@ fn post_tool_use(cfg: &ResolvedConfig, payload: &HookPayload, cwd: &std::path::P
     // One second verdict per comment the rules matched, computed before the
     // text is assembled so the annotation lands under its own finding. The
     // envelope format is unchanged: the model adds lines, not structure.
-    let judged = agent_slop_integrations::judge::annotate(cfg, &findings, cwd, deadline(cfg).unwrap_or_else(Instant::now), None);
+    let judged = agent_slop_integrations::judge::annotate(
+        cfg,
+        &findings,
+        cwd,
+        deadline(cfg).unwrap_or_else(Instant::now),
+        None,
+    );
     for (i, f) in findings.iter().take(ADVICE_LINES).enumerate() {
         lines.push(format!("{}:{} {} — {}", f.file, f.line, f.rule, f.message));
         if let Some(Some(v)) = judged.get(i) {
@@ -293,18 +301,18 @@ fn post_tool_use(cfg: &ResolvedConfig, payload: &HookPayload, cwd: &std::path::P
     // The second axis fires without a rule: code the agent just added that
     // reads as if it were hiding a why. It is advisory by construction — no
     // rule matched, so there is nothing to suppress and nothing to block on.
-    lines.extend(needs_advice(cfg, cwd, &rel));
+    lines.extend(needs_advice(cfg, cwd, rel));
     if lines.is_empty() {
         return Outcome {
             row: Some(row),
             ..Outcome::allow()
         };
     }
-    let context = lines.join("\n");
+    let advice = lines.join("\n");
     let envelope = serde_json::json!({
         "hookSpecificOutput": {
             "hookEventName": "PostToolUse",
-            "additionalContext": context,
+            "additionalContext": advice,
         }
     });
     Outcome {
@@ -332,22 +340,34 @@ fn needs_advice(cfg: &ResolvedConfig, cwd: &std::path::Path, rel: &str) -> Vec<S
     let Some(base) = repo.resolve_ref(&cfg.ref_) else {
         return Vec::new();
     };
-    let chunks = agent_slop_integrations::judge::added_code_chunks(&repo.root, &base, Some(rel), cfg.judge.max_verdicts);
-    agent_slop_integrations::judge::needs(cfg, &chunks, &repo_name(&repo.root), deadline(cfg).unwrap_or_else(Instant::now))
-        .iter()
-        .map(|hit| hit.render())
-        .collect()
+    let chunks = agent_slop_integrations::judge::added_code_chunks(
+        &repo.root,
+        &base,
+        Some(rel),
+        cfg.judge.max_verdicts,
+    );
+    agent_slop_integrations::judge::needs(
+        cfg,
+        &chunks,
+        &repo_name(&repo.root),
+        deadline(cfg).unwrap_or_else(Instant::now),
+    )
+    .iter()
+    .map(agent_slop_integrations::judge::NeedsHit::render)
+    .collect()
 }
 
 fn repo_name(root: &std::path::Path) -> String {
-    root.file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| String::from("repo"))
+    root.file_name().map_or_else(
+        || String::from("repo"),
+        |n| n.to_string_lossy().into_owned(),
+    )
 }
 
-/// Pin the baseline. Always exit 0, nothing on stdout: SessionStart cannot
+/// Pin the baseline. Always exit 0, nothing on stdout: `SessionStart` cannot
 /// block and is off the turn's critical path.
-fn session_start(cfg: &ResolvedConfig, payload: &HookPayload, cwd: &std::path::Path) -> Outcome {    let (Some(session_id), Some(repo)) = (payload.session_id(), Repo::discover(cwd)) else {
+fn session_start(cfg: &ResolvedConfig, payload: &HookPayload, cwd: &std::path::Path) -> Outcome {
+    let (Some(session_id), Some(repo)) = (payload.session_id(), Repo::discover(cwd)) else {
         return Outcome::allow();
     };
     ratchet::pin_session(cfg, &repo, &Cache::open(true), session_id, deadline(cfg));
@@ -413,7 +433,7 @@ fn stop(cfg: &ResolvedConfig, payload: &HookPayload, cwd: &std::path::Path) -> O
         blocked: gate.blocked,
         would_block: gate.would_block,
         files_scanned: gate.files_scanned,
-        duration_ms: started.elapsed().as_millis() as u64,
+        duration_ms: elapsed_ms(started),
         // The Stop leg runs no linters (ADR-064: the baseline is read from
         // git blobs, which no linter can lint without materialising a
         // tree), so the map is empty rather than claiming a tool ran.
@@ -460,7 +480,7 @@ fn render_block(
     let corpus = Corpus::load();
     let mut lines =
         vec!["agent-slop: this turn added slop that blocks (ADR-064 ratchet)".to_string()];
-    let mut shown_per_rule: std::collections::BTreeMap<&str, usize> = Default::default();
+    let mut shown_per_rule: BTreeMap<&str, usize> = BTreeMap::default();
 
     for (i, f) in blocking.iter().enumerate() {
         let shown = shown_per_rule.entry(f.rule.as_str()).or_insert(0);
@@ -557,7 +577,7 @@ mod tests {
         assert_eq!(p.session_id(), Some("01a0c884-9296-7b90-bc8d-a79fd16301a5"));
     }
 
-    /// grok's own vocabulary is snake_case (`post_tool_use`), so a
+    /// grok's own vocabulary is `snake_case` (`post_tool_use`), so a
     /// case-insensitive compare against `posttooluse` is false — the
     /// underscores are real characters. Dispatch must recognise the event
     /// through either key.
@@ -715,11 +735,7 @@ mod tests {
             suppression: None,
             fixable: true,
         };
-        let lines = render_block(
-            std::slice::from_ref(&f),
-            std::slice::from_ref(&f),
-            &[None],
-        );
+        let lines = render_block(std::slice::from_ref(&f), std::slice::from_ref(&f), &[None]);
         let text = lines.join("\n");
         assert!(text.contains("legitimate when:"), "{text}");
         assert!(

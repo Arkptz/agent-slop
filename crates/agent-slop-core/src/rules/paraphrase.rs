@@ -19,7 +19,7 @@ fn is_stopword(w: &str, stopwords: &[String]) -> bool {
 
 fn tokens(text: &str, stopwords: &[String]) -> Vec<String> {
     text.split(|c: char| !c.is_alphanumeric())
-        .map(|w| w.to_lowercase())
+        .map(str::to_lowercase)
         .filter(|w| !w.is_empty() && !is_stopword(w, stopwords))
         .collect()
 }
@@ -81,6 +81,7 @@ fn gloss(word: &str, glossary: &[String]) -> String {
 
 /// True when the comment restates the code below it, per the rule's
 /// thresholds. Returns the shared tokens (for the message) when it fires.
+#[must_use]
 pub fn paraphrase_hit(rule: &RuleFile, comment: &Comment) -> Option<Vec<String>> {
     let m = &rule.r#match;
     let min_shared = m.min_shared_identifiers.unwrap_or(2);
@@ -135,6 +136,7 @@ pub fn paraphrase_hit(rule: &RuleFile, comment: &Comment) -> Option<Vec<String>>
 /// words even when an elaborating tail follows. Headings at or below
 /// `min_comment_words` are conventional (Go doc comments open with the
 /// name) and stay out.
+#[must_use]
 pub fn name_only_docstring(rule: &RuleFile, comment: &Comment) -> Option<Vec<String>> {
     let m = &rule.r#match;
     let min_words = m.min_comment_words.unwrap_or(2);
@@ -189,18 +191,18 @@ pub fn name_only_docstring(rule: &RuleFile, comment: &Comment) -> Option<Vec<Str
         .unwrap_or(&comment.text)
         .to_string();
     let head_words = glossed(&head);
-    if head_words.len() >= min_head {
-        if let Some(shared) = shared_with(&head_words) {
-            return Some(shared);
-        }
+    if head_words.len() >= min_head
+        && let Some(shared) = shared_with(&head_words)
+    {
+        return Some(shared);
     }
 
     // (a) the whole comment is nothing but the name.
     let words = glossed(&comment.text);
-    if words.len() > min_words {
-        if let Some(shared) = shared_with(&words) {
-            return Some(shared);
-        }
+    if words.len() > min_words
+        && let Some(shared) = shared_with(&words)
+    {
+        return Some(shared);
     }
     None
 }
@@ -220,7 +222,7 @@ mod tests {
             line: 1,
             col: 1,
             end_line: 1,
-            next_code_ids: ids.iter().map(|s| s.to_string()).collect(),
+            next_code_ids: ids.iter().map(std::string::ToString::to_string).collect(),
         }
     }
 

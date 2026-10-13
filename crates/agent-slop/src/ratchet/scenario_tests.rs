@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use config::{builtin_config, Mode, ResolvedConfig};
+use config::{Mode, ResolvedConfig, builtin_config};
 
 /// Fires `slop/comment-history` at `error` — the fixture string the
 /// engine's own unit tests use.
@@ -43,8 +43,7 @@ impl Scratch {
         );
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map(|d| d.subsec_nanos())
-            .unwrap_or(0);
+            .map_or(0, |d| d.subsec_nanos());
         let root = std::env::temp_dir().join(format!(
             "agent-slop-it-{name}-{}-{nanos}",
             std::process::id()
@@ -56,11 +55,7 @@ impl Scratch {
         let cache = root.join("cache");
         std::fs::create_dir_all(&dir).expect("scratch repo dir");
         std::fs::create_dir_all(&cache).expect("scratch cache dir");
-        let s = Scratch {
-            root,
-            dir,
-            cache,
-        };
+        let s = Scratch { root, dir, cache };
         s.git(&["init", "--quiet", "--initial-branch=main"]);
         s.git(&["config", "user.name", "agent-slop-it"]);
         s.git(&["config", "user.email", "it@example.invalid"]);
@@ -68,10 +63,10 @@ impl Scratch {
     }
 
     fn git(&self, args: &[&str]) -> String {
-        self.git_at(&self.dir, args)
+        Scratch::git_at(&self.dir, args)
     }
 
-    fn git_at(&self, dir: &Path, args: &[&str]) -> String {
+    fn git_at(dir: &Path, args: &[&str]) -> String {
         let out = Command::new("git")
             .current_dir(dir)
             .args(args)
@@ -108,8 +103,14 @@ impl Scratch {
     }
 
     fn pin(&self, session_id: &str) -> ratchet::SessionBaseline {
-        ratchet::pin_session(&builtin_config(), &self.repo(), &self.store(), session_id, None)
-            .expect("pinning HEAD")
+        ratchet::pin_session(
+            &builtin_config(),
+            &self.repo(),
+            &self.store(),
+            session_id,
+            None,
+        )
+        .expect("pinning HEAD")
     }
 
     /// The Stop leg's library path: pinned state read back from the real
@@ -232,12 +233,12 @@ fn a_submodule_path_is_skipped_and_listed() {
 
     let inner = s.root.join("inner");
     std::fs::create_dir_all(&inner).expect("inner dir");
-    s.git_at(&inner, &["init", "--quiet", "--initial-branch=main"]);
-    s.git_at(&inner, &["config", "user.name", "agent-slop-it"]);
-    s.git_at(&inner, &["config", "user.email", "it@example.invalid"]);
+    Scratch::git_at(&inner, &["init", "--quiet", "--initial-branch=main"]);
+    Scratch::git_at(&inner, &["config", "user.name", "agent-slop-it"]);
+    Scratch::git_at(&inner, &["config", "user.email", "it@example.invalid"]);
     std::fs::write(inner.join("lib.py"), CLEAN).expect("inner write");
-    s.git_at(&inner, &["add", "-A"]);
-    s.git_at(&inner, &["commit", "--quiet", "-m", "inner base"]);
+    Scratch::git_at(&inner, &["add", "-A"]);
+    Scratch::git_at(&inner, &["commit", "--quiet", "-m", "inner base"]);
 
     // git ≥2.38 refuses the file transport for submodules by default, and
     // a repo-local setting does not reach the clone child — only the
@@ -266,13 +267,15 @@ fn a_submodule_path_is_skipped_and_listed() {
     // Advance the submodule: the outer worktree gitlink moves, so "sub"
     // reaches the changed set without any outer commit.
     std::fs::write(inner.join("lib.py"), SLOP).expect("inner write");
-    s.git_at(&inner, &["add", "-A"]);
-    s.git_at(&inner, &["commit", "--quiet", "-m", "inner moves on"]);
-    let new_tip = s.git_at(&inner, &["rev-parse", "HEAD"]).trim().to_string();
+    Scratch::git_at(&inner, &["add", "-A"]);
+    Scratch::git_at(&inner, &["commit", "--quiet", "-m", "inner moves on"]);
+    let new_tip = Scratch::git_at(&inner, &["rev-parse", "HEAD"])
+        .trim()
+        .to_string();
     let sub = s.dir.join("sub");
-    s.git_at(&sub, &["config", "protocol.file.allow", "always"]);
-    s.git_at(&sub, &["fetch", "--quiet", "origin"]);
-    s.git_at(&sub, &["checkout", "--quiet", &new_tip]);
+    Scratch::git_at(&sub, &["config", "protocol.file.allow", "always"]);
+    Scratch::git_at(&sub, &["fetch", "--quiet", "origin"]);
+    Scratch::git_at(&sub, &["checkout", "--quiet", &new_tip]);
 
     let changed = s.repo().changed_files(&pinned.commit);
     assert!(
@@ -308,7 +311,9 @@ fn block_mode_blocks_and_observe_mode_does_not() {
         "the pin landed in the scratch cache dir"
     );
     assert_eq!(
-        ratchet::read_session(&s.store(), "sess").map(|p| p.commit).as_deref(),
+        ratchet::read_session(&s.store(), "sess")
+            .map(|p| p.commit)
+            .as_deref(),
         Some(pinned.commit.as_str())
     );
 
@@ -436,7 +441,7 @@ fn expired_session_files_are_swept_on_read() {
     let path = s.session_path("old");
     assert!(path.exists());
 
-    let stale = SystemTime::now() - Duration::from_secs(8 * 24 * 60 * 60 + 3600);
+    let stale = SystemTime::now() - Duration::from_hours(193);
     let file = std::fs::File::options()
         .write(true)
         .open(&path)

@@ -7,6 +7,7 @@
 //! blocks).
 
 /// Interpret one corpus pattern against `text`.
+#[must_use]
 pub fn matches_condition(pat: &str, text: &str) -> bool {
     let (ci, pat) = match pat.strip_prefix("(?i)") {
         Some(rest) => (true, rest),
@@ -50,19 +51,19 @@ pub fn matches_condition(pat: &str, text: &str) -> bool {
         return has_dotted_version(&hay);
     }
     // `(...)-\d+` — id-prefix alternation plus digits.
-    if let Some(stem) = needle.strip_suffix("-\\d+") {
-        if let Some(stem) = stem.strip_prefix('(').and_then(|s| s.strip_suffix(')')) {
-            let prefixes: Vec<String> = stem.split('|').map(|p| p.to_lowercase()).collect();
-            return hay
-                .split(|c: char| !c.is_ascii_alphanumeric() && c != '-')
-                .any(|t| {
-                    prefixes.iter().any(|p| {
-                        t.to_lowercase().starts_with(&format!("{p}-"))
-                            && t.len() > p.len() + 1
-                            && t[p.len() + 1..].chars().all(|c| c.is_ascii_digit())
-                    })
-                });
-        }
+    if let Some(stem) = needle.strip_suffix("-\\d+")
+        && let Some(stem) = stem.strip_prefix('(').and_then(|s| s.strip_suffix(')'))
+    {
+        let prefixes: Vec<String> = stem.split('|').map(str::to_lowercase).collect();
+        return hay
+            .split(|c: char| !c.is_ascii_alphanumeric() && c != '-')
+            .any(|t| {
+                prefixes.iter().any(|p| {
+                    t.to_lowercase().starts_with(&format!("{p}-"))
+                        && t.len() > p.len() + 1
+                        && t[p.len() + 1..].chars().all(|c| c.is_ascii_digit())
+                })
+            });
     }
     false
 }

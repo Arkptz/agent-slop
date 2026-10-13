@@ -8,12 +8,13 @@
 
 use super::corpus::MatchSection;
 
-/// The comment payload: anchored marker strip (the same LEADING_MARKERS
+/// The comment payload: anchored marker strip (the same `LEADING_MARKERS`
 /// table as `finding::normalize`, restated here because it is private
 /// there — the values must stay in sync).
+#[must_use]
 pub fn payload(text: &str) -> &str {
-    let mut s = text.trim_start();
     const MARKERS: [&str; 8] = ["/**", "///", "//!", "//", "/*", "#", "--", ";"];
+    let mut s = text.trim_start();
     while let Some(m) = MARKERS.iter().find(|m| s.starts_with(**m)) {
         s = &s[m.len()..];
     }
@@ -56,6 +57,7 @@ fn contains_word(hay: &str, phrase: &str) -> bool {
 }
 
 /// First of `phrases` present in `text` as a word (or stem), if any.
+#[must_use]
 pub fn any_phrase<'p>(phrases: &'p [String], text: &str) -> Option<&'p String> {
     let hay = padded_lower(&without_code_spans(payload(text)));
     phrases.iter().find(|p| contains_word(&hay, p))
@@ -63,6 +65,7 @@ pub fn any_phrase<'p>(phrases: &'p [String], text: &str) -> Option<&'p String> {
 
 /// Which phrase of `section.phrases` first matches `text`, if any. Returns
 /// the phrase as written in the corpus (for the message).
+#[must_use]
 pub fn phrase_hit(section: &MatchSection, text: &str) -> Option<String> {
     if section.word_boundaries {
         return any_phrase(&section.phrases, text).cloned();
@@ -86,6 +89,7 @@ pub fn phrase_hit(section: &MatchSection, text: &str) -> Option<String> {
 /// are exempted first, in both the bare (`todo:`) and dated
 /// (`todo(2026-12-01):`) spellings.
 fn review_finding_id(hay: &str) -> bool {
+    const DEBT: [&str; 4] = ["todo", "fixme", "xxx", "hack"];
     let Some((head, rest)) = hay.split_once(':') else {
         return false;
     };
@@ -96,7 +100,6 @@ fn review_finding_id(hay: &str) -> bool {
     if rest.split_whitespace().count() >= 3 {
         return false;
     }
-    const DEBT: [&str; 4] = ["todo", "fixme", "xxx", "hack"];
     if DEBT.contains(&head.split_once('(').map_or(head, |(root, _)| root)) {
         return false;
     }
@@ -137,6 +140,7 @@ fn review_finding_id(hay: &str) -> bool {
 /// frozen in (`M-01:`, `P2-6:`, `NIT:`) — never a bare substring inside
 /// another word. The literal marker `label:` is the corpus's spelling for
 /// that shape: it hits exactly a short leading `word...:` run.
+#[must_use]
 pub fn anchored_marker_hit(section: &MatchSection, text: &str) -> Option<String> {
     let body = payload(text).trim_start_matches(['*', ' ']);
     let hay = body.to_lowercase();
@@ -158,6 +162,7 @@ pub fn anchored_marker_hit(section: &MatchSection, text: &str) -> Option<String>
 /// `slop/rejected-alternative`: a contrast connective ("а не", "instead
 /// of"), or a negation opening a clause (", not Y", "— не Y"). Code spans
 /// are blanked first: a quoted `X, not Y` is documentation of the shape.
+#[must_use]
 pub fn rejected_alternative_hit(section: &MatchSection, text: &str) -> Option<String> {
     let clean = without_code_spans(payload(text));
     if let Some(p) = any_phrase(&section.phrases, &clean) {
@@ -179,6 +184,7 @@ pub fn rejected_alternative_hit(section: &MatchSection, text: &str) -> Option<St
 /// of its own. Standards named in `stopwords` (`UTF-8`, `RFC-9110`) are
 /// not references to a tracker, and neither is a one-digit suffix: that
 /// shape is a product version (`GPT-6`), trackers number from 01 or 100.
+#[must_use]
 pub fn bare_reference(section: &MatchSection, text: &str) -> Option<String> {
     let clean = without_code_spans(payload(text));
     let is_id = |tok: &str| is_doc_id(tok, section);
@@ -288,6 +294,7 @@ fn contains_marker_word(hay: &str, needle: &str) -> bool {
 }
 
 /// Marker scan for TODO-family: any of `markers` present as a word.
+#[must_use]
 pub fn marker_present(section: &MatchSection, text: &str) -> Option<String> {
     let hay = without_code_spans(payload(text)).to_lowercase();
     section
@@ -298,7 +305,8 @@ pub fn marker_present(section: &MatchSection, text: &str) -> Option<String> {
 }
 
 /// True when the comment contains a digit anywhere (the perf-claim and
-/// unsourced-constraint "requires_no_digit"/referent guards).
+/// unsourced-constraint "`requires_no_digit"/referent` guards).
+#[must_use]
 pub fn has_digit(text: &str) -> bool {
     payload(text).chars().any(|c| c.is_ascii_digit())
 }
@@ -306,6 +314,7 @@ pub fn has_digit(text: &str) -> bool {
 /// A referent, per SPEC-006 "Suppression": URL, (ADR|POL|SPEC|INC|TASK)-id,
 /// issue ref, path with a slash, or date:YYYY-MM-DD. Also used to decide
 /// whether an unsourced-constraint comment names its source.
+#[must_use]
 pub fn has_referent(text: &str) -> bool {
     let s = payload(text);
     s.contains("://") || super::suppression::referent().is_match(&format!(" {s} "))
@@ -317,9 +326,18 @@ mod tests {
 
     fn section(phrases: &[&str], markers: &[&str], anchored: &[&str]) -> MatchSection {
         MatchSection {
-            phrases: phrases.iter().map(|s| s.to_string()).collect(),
-            markers: markers.iter().map(|s| s.to_string()).collect(),
-            anchored_markers: anchored.iter().map(|s| s.to_string()).collect(),
+            phrases: phrases
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
+            markers: markers
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
+            anchored_markers: anchored
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
             word_boundaries: true,
             ..MatchSection::default()
         }

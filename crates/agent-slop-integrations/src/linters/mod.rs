@@ -21,7 +21,7 @@ use std::path::Path;
 use std::process::Command;
 
 use agent_slop_core::config::{ResolvedConfig, ResolvedLinter, RuleLevel};
-use agent_slop_core::finding::{fingerprint, Finding, Severity, Source};
+use agent_slop_core::finding::{Finding, Severity, Source, fingerprint};
 
 /// What a parse yields, before config decides our severity. `code` is the
 /// linter's own id; deadnix emits none, so the adapter supplies its fixed
@@ -102,7 +102,7 @@ pub enum PathArity {
     WholeProject,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct Adapter {
     pub tool: &'static str,
     pub bin: &'static str,
@@ -151,8 +151,9 @@ pub struct Skipped {
 /// one is stricter than cost alone: an adapter that evaluates repository
 /// code is never selected by `auto` and never runs in a hook, because a
 /// hook fires on a clone the user never inspected.
+#[must_use]
 pub fn eligible(a: &Adapter, stage: Stage, selection: &Selection, cfg: &ResolvedConfig) -> bool {
-    if !cfg.linters.get(a.tool).map(|l| l.enable).unwrap_or(true) {
+    if !cfg.linters.get(a.tool).is_none_or(|l| l.enable) {
         return false;
     }
     let named = match selection {
@@ -182,6 +183,7 @@ pub struct PathIndex {
 }
 
 impl PathIndex {
+    #[must_use]
     pub fn from_env() -> Self {
         let dirs = std::env::var_os("PATH")
             .map(|p| std::env::split_paths(&p).collect())
@@ -189,6 +191,7 @@ impl PathIndex {
         Self { dirs }
     }
 
+    #[must_use]
     pub fn has(&self, bin: &str) -> bool {
         self.dirs.iter().any(|d| d.join(bin).is_file())
     }
@@ -205,6 +208,11 @@ impl PathIndex {
 /// `ok`. Handing it the whole list therefore turned every multi-file nix
 /// change into a silent no-lint. The recorded clap error is
 /// `tests/linters/fixtures/statix-two-targets.stderr`.
+///
+/// # Errors
+///
+/// Returns [`Skipped`] when the binary is absent, no target matches the
+/// adapter's extensions, or the process cannot be spawned.
 pub fn run(
     a: &Adapter,
     repo_root: &Path,
@@ -260,6 +268,7 @@ fn exec(a: &Adapter, repo_root: &Path, paths: &[String]) -> Result<String, Skipp
 /// Repo-relative, '/'-separated. Linters differ in what they echo back:
 /// ruff prints the absolute path it was handed, deadnix prints `./a.nix`
 /// for a directory walk and `a.nix` for named files.
+#[must_use]
 pub fn normalize_path(raw: &str, repo_root: &Path) -> String {
     let slashed = raw.replace('\\', "/");
     let rel = Path::new(&slashed)
@@ -275,15 +284,15 @@ pub fn normalize_path(raw: &str, repo_root: &Path) -> String {
 /// on our side. Matching is by prefix, which is how the linters' own code
 /// families work (`F` selects `F401`).
 fn selected(code: &str, linter: &ResolvedLinter) -> bool {
-    if let Some(select) = &linter.select {
-        if !select.iter().any(|s| code.starts_with(s.as_str())) {
-            return false;
-        }
+    if let Some(select) = &linter.select
+        && !select.iter().any(|s| code.starts_with(s.as_str()))
+    {
+        return false;
     }
-    if let Some(ignore) = &linter.ignore {
-        if ignore.iter().any(|s| code.starts_with(s.as_str())) {
-            return false;
-        }
+    if let Some(ignore) = &linter.ignore
+        && ignore.iter().any(|s| code.starts_with(s.as_str()))
+    {
+        return false;
     }
     true
 }
@@ -303,8 +312,7 @@ fn severity_of(
     let level = cfg
         .linters
         .get(tool)
-        .map(|l| l.severity)
-        .unwrap_or(RuleLevel::Warning);
+        .map_or(RuleLevel::Warning, |l| l.severity);
     let base = level.severity()?;
     let capped = if base == Severity::Error {
         Severity::Warning
@@ -321,12 +329,14 @@ fn severity_of(
 /// Default snippet for an imported finding: the linter's message. The
 /// source line is not read here — the ratchet only needs a stable identity
 /// per finding, and a message survives reindentation where a line does not.
+#[must_use]
 pub fn snippet_from_message(raw: &RawFinding) -> String {
     raw.message.chars().take(512).collect()
 }
 
 /// Raw findings to the shared model. Foreign ids are never rewritten, so
 /// telemetry joins with upstream documentation.
+#[must_use]
 pub fn to_findings(
     cfg: &ResolvedConfig,
     tool: &str,
@@ -368,6 +378,7 @@ pub fn to_findings(
 }
 
 /// Per-tool status for the telemetry row (`linters: {"ruff": "ok"}`).
+#[must_use]
 pub fn status_map(ok: &[&str], skipped: &[Skipped]) -> BTreeMap<String, String> {
     let mut m: BTreeMap<String, String> = ok
         .iter()
@@ -588,7 +599,7 @@ mod tests {
     ///
     /// The tool is `/bin/sh -c <script> faketix`, and nothing is written to
     /// disk. A `#!/bin/sh` file on disk was the obvious fixture and it was
-    /// wrong twice over: the runner execs a OnePerRun tool once per target,
+    /// wrong twice over: the runner execs a `OnePerRun` tool once per target,
     /// and Linux refuses to exec a script whose previous execution has not
     /// finished tearing down (ETXTBSY). That is a race, not a rare state —
     /// it took roughly one run in five here and failed a NixOS rebuild on a

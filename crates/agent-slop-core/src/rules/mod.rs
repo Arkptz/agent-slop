@@ -11,7 +11,7 @@ pub mod paraphrase;
 pub mod suppression;
 
 use crate::config::ResolvedConfig;
-use crate::finding::{fingerprint, Finding, Severity, Source, Suppression};
+use crate::finding::{Finding, Severity, Source, Suppression, fingerprint};
 use crate::lang::{self, Comment};
 use corpus::{Corpus, RuleFile};
 
@@ -19,6 +19,7 @@ use corpus::{Corpus, RuleFile};
 /// Never fails: an unparsable source yields zero comments (tree-sitter
 /// error nodes carry no comment kinds worth reporting) and unknown
 /// languages yield nothing.
+#[must_use]
 pub fn scan_source(cfg: &ResolvedConfig, file: &str, source: &str) -> Vec<Finding> {
     let Some(spec) = lang::spec_for_path(file) else {
         return Vec::new();
@@ -136,16 +137,12 @@ fn evaluate_rule(
     let m = &rule.r#match;
 
     let hit_message: Option<String> = match rule.meta.id.as_str() {
-        "comment-history" => lex::phrase_hit(m, &comment.text).map(|p| {
-            format!(
-                "change-history residue '{}' — narrates the edit, not the code",
-                p
-            )
-        }),
+        "comment-history" => lex::phrase_hit(m, &comment.text)
+            .map(|p| format!("change-history residue '{p}' — narrates the edit, not the code")),
         "comment-meta" => lex::phrase_hit(m, &comment.text)
-            .map(|p| format!("session residue '{}' — deferral with no owner", p)),
+            .map(|p| format!("session residue '{p}' — deferral with no owner")),
         "review-jargon" => lex::anchored_marker_hit(m, &comment.text)
-            .map(|p| format!("review marker '{}' frozen into the source", p)),
+            .map(|p| format!("review marker '{p}' frozen into the source")),
         "comment-paraphrase" => paraphrase::paraphrase_hit(rule, comment)
             .map(|shared| format!("restates the code below ({})", shared.join(", "))),
         "todo-no-condition" => {
@@ -158,8 +155,7 @@ fn evaluate_rule(
                 None
             } else {
                 Some(format!(
-                    "{} with no removal condition — name one or delete it",
-                    marker
+                    "{marker} with no removal condition — name one or delete it"
                 ))
             }
         }
@@ -169,8 +165,7 @@ fn evaluate_rule(
                 None
             } else {
                 Some(format!(
-                    "perf claim '{}' without a measurement — cite it or drop it",
-                    phrase
+                    "perf claim '{phrase}' without a measurement — cite it or drop it"
                 ))
             }
         }
@@ -180,8 +175,7 @@ fn evaluate_rule(
                 None
             } else {
                 Some(format!(
-                    "constraint '{}' names no source — name the product, bug, or version",
-                    phrase
+                    "constraint '{phrase}' names no source — name the product, bug, or version"
                 ))
             }
         }
@@ -221,13 +215,11 @@ fn evaluate_rule(
                 )
             })
         }
-        "self-justification" => lex::phrase_hit(m, &comment.text).map(|p| {
-            format!("self-justification '{p}' — argues permission nobody asked for")
-        }),
-        "config-deploy-narration" => lex::phrase_hit(m, &comment.text).map(|p| {
-            format!("deploy narration '{p}' — mechanics this file cannot enforce")
-        }),
-        "comment-language" => None, // script detection lands with the language matcher
+        "self-justification" => lex::phrase_hit(m, &comment.text)
+            .map(|p| format!("self-justification '{p}' — argues permission nobody asked for")),
+        "config-deploy-narration" => lex::phrase_hit(m, &comment.text)
+            .map(|p| format!("deploy narration '{p}' — mechanics this file cannot enforce")),
+        // comment-language is reserved: no script-detection matcher ships.
         _ => None,
     };
 
@@ -302,9 +294,10 @@ mod tests {
             "a.py",
             "# We previously always sent a Referer — that was a bug.\nreferer = None\n",
         );
-        assert!(f
-            .iter()
-            .any(|x| x.rule == "slop/comment-history" && x.severity == Severity::Error));
+        assert!(
+            f.iter()
+                .any(|x| x.rule == "slop/comment-history" && x.severity == Severity::Error)
+        );
     }
 
     #[test]
@@ -373,10 +366,7 @@ mod tests {
                 "slop/comment-history",
             ),
             ("# переименовано из proxy_bind", "slop/comment-history"),
-            (
-                "# Раньше этот импорт ронял бота",
-                "slop/comment-history",
-            ),
+            ("# Раньше этот импорт ронял бота", "slop/comment-history"),
             (
                 "# --- original 6 solver tests (behavioral assertions unchanged) ---",
                 "slop/comment-history",
@@ -448,8 +438,10 @@ mod tests {
                 .map(|f| f.rule)
                 .collect()
         };
-        assert!(rules("# TODO ручная миграция: RENAME TABLE a TO b")
-            .contains(&"slop/manual-ddl".into()));
+        assert!(
+            rules("# TODO ручная миграция: RENAME TABLE a TO b")
+                .contains(&"slop/manual-ddl".into())
+        );
         assert!(
             rules("# Run manually before deploy: alter table x add column y int")
                 .contains(&"slop/manual-ddl".into())
@@ -493,9 +485,11 @@ mod tests {
             "# an asserted operator only ever touches a run it owns (ADR-018 C4)"
         ));
         let doc = "/// The relay-asserted READ/WRITE dispatch\n/// verbs ownership-gate against this so an asserted operator touches\n/// a run it owns (ADR-018 C4).\nfn f() {}\n";
-        assert!(scan_source(&cfg, "a.rs", doc)
-            .iter()
-            .all(|f| f.rule != "slop/bare-reference"));
+        assert!(
+            scan_source(&cfg, "a.rs", doc)
+                .iter()
+                .all(|f| f.rule != "slop/bare-reference")
+        );
         assert!(!fires("# GPT-6 Luna"));
         assert!(!fires("# no ids here at all"));
     }
@@ -508,6 +502,6 @@ mod tests {
             "a.py",
             "# Привет, это русский комментарий без референса\nx = 1\n",
         );
-        assert!(f.is_empty(), "off means no findings: {:?}", f);
+        assert!(f.is_empty(), "off means no findings: {f:?}");
     }
 }

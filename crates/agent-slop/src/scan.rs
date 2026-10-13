@@ -11,14 +11,14 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use crate::cli::{Format, ScanArgs};
-use agent_slop_core::config::{excluded, scoped_out, ResolvedConfig};
+use crate::ratchet::{self, Cache, Repo, SkippedPath};
+use agent_slop_core::config::{ResolvedConfig, excluded, scoped_out};
 use agent_slop_core::finding::{Finding, Severity};
+use agent_slop_core::rules::scan_source;
 use agent_slop_integrations::judge;
 use agent_slop_integrations::linters::{self, PathIndex, Selection, Skipped, Stage};
-use crate::ratchet::{self, Cache, Repo, SkippedPath};
-use agent_slop_core::rules::scan_source;
 
-pub struct Report {
+pub(crate) struct Report {
     pub findings: Vec<Finding>,
     pub added: Vec<String>,
     pub skipped_paths: Vec<SkippedPath>,
@@ -43,15 +43,15 @@ fn glob_matches(pattern: &str, id: &str) -> bool {
 }
 
 fn rule_selected(args: &ScanArgs, id: &str) -> bool {
-    if let Some(globs) = &args.rules {
-        if !globs.iter().any(|g| glob_matches(g, id)) {
-            return false;
-        }
+    if let Some(globs) = &args.rules
+        && !globs.iter().any(|g| glob_matches(g, id))
+    {
+        return false;
     }
-    if let Some(globs) = &args.no_rules {
-        if globs.iter().any(|g| glob_matches(g, id)) {
-            return false;
-        }
+    if let Some(globs) = &args.no_rules
+        && globs.iter().any(|g| glob_matches(g, id))
+    {
+        return false;
     }
     true
 }
@@ -119,7 +119,61 @@ fn relative(root: &Path, path: &Path) -> String {
         .replace('\\', "/")
 }
 
-pub fn run(cfg: &ResolvedConfig, args: &ScanArgs, cwd: &Path, git: bool) -> Report {
+/// Every file the path arguments name, expanded and deduplicated; no
+/// arguments means the whole root.
+fn targets_of(paths: &[String], root: &Path, cwd: &Path) -> Vec<PathBuf> {
+    let mut targets = Vec::new();
+    if paths.is_empty() {
+        expand(root, &mut targets);
+    }
+    for p in paths {
+        let path = Path::new(p);
+        let full = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            cwd.join(path)
+        };
+        expand(&full, &mut targets);
+    }
+    targets.sort();
+    targets.dedup();
+    targets
+}
+
+/// The eligible linter adapters over `rel_targets`: their findings, the
+/// tools that skipped, and the per-tool status map.
+fn run_linters(
+    cfg: &ResolvedConfig,
+    args: &ScanArgs,
+    root: &Path,
+    rel_targets: &[String],
+) -> (Vec<Finding>, Vec<Skipped>, BTreeMap<String, String>) {
+    let selection = args
+        .linters
+        .as_deref()
+        .map_or(Selection::Auto, Selection::parse);
+    let mut findings = Vec::new();
+    let mut skipped_tools = Vec::new();
+    let mut ran_tools: Vec<&str> = Vec::new();
+    let index = PathIndex::from_env();
+    for adapter in linters::ADAPTERS {
+        if !linters::eligible(adapter, Stage::Scan, &selection, cfg) {
+            continue;
+        }
+        match linters::run(adapter, root, rel_targets, &index) {
+            Ok(stdout) => {
+                let raws = (adapter.parse)(&stdout);
+                findings.extend(linters::to_findings(cfg, adapter.tool, raws, root));
+                ran_tools.push(adapter.tool);
+            }
+            Err(skip) => skipped_tools.push(skip),
+        }
+    }
+    let status = linters::status_map(&ran_tools, &skipped_tools);
+    (findings, skipped_tools, status)
+}
+
+pub(crate) fn run(cfg: &ResolvedConfig, args: &ScanArgs, cwd: &Path, git: bool) -> Report {
     let deadline = args
         .deadline_ms
         .or(Some(cfg.timeout_ms))
@@ -127,25 +181,9 @@ pub fn run(cfg: &ResolvedConfig, args: &ScanArgs, cwd: &Path, git: bool) -> Repo
     let repo = if git { Repo::discover(cwd) } else { None };
     let root = repo
         .as_ref()
-        .map(|r| r.root.clone())
-        .unwrap_or_else(|| cwd.to_path_buf());
+        .map_or_else(|| cwd.to_path_buf(), |r| r.root.clone());
 
-    let mut targets = Vec::new();
-    if args.paths.is_empty() {
-        expand(&root, &mut targets);
-    } else {
-        for p in &args.paths {
-            let path = Path::new(p);
-            let full = if path.is_absolute() {
-                path.to_path_buf()
-            } else {
-                cwd.join(path)
-            };
-            expand(&full, &mut targets);
-        }
-    }
-    targets.sort();
-    targets.dedup();
+    let mut targets = targets_of(&args.paths, &root, cwd);
 
     // `--since` narrows the scan to what differs from the ref. Without this
     // a PR scan in a monorepo reported every file in the tree, and the
@@ -203,29 +241,10 @@ pub fn run(cfg: &ResolvedConfig, args: &ScanArgs, cwd: &Path, git: bool) -> Repo
         );
     }
 
-    let selection = args
-        .linters
-        .as_deref()
-        .map(Selection::parse)
-        .unwrap_or(Selection::Auto);
-    let mut skipped_tools = Vec::new();
-    let mut ran_tools: Vec<&str> = Vec::new();
-    let index = PathIndex::from_env();
     let rel_targets: Vec<String> = targets.iter().map(|p| relative(&root, p)).collect();
-    for adapter in linters::ADAPTERS {
-        if !linters::eligible(adapter, Stage::Scan, &selection, cfg) {
-            continue;
-        }
-        match linters::run(adapter, &root, &rel_targets, &index) {
-            Ok(stdout) => {
-                let raws = (adapter.parse)(&stdout);
-                findings.extend(linters::to_findings(cfg, adapter.tool, raws, &root));
-                ran_tools.push(adapter.tool);
-            }
-            Err(skip) => skipped_tools.push(skip),
-        }
-    }
-    let linter_status = linters::status_map(&ran_tools, &skipped_tools);
+    let (linter_findings, skipped_tools, linter_status) =
+        run_linters(cfg, args, &root, &rel_targets);
+    findings.extend(linter_findings);
 
     findings.retain(|f| rule_selected(args, &f.rule) && severity_kept(args.severity, f.severity));
     findings.sort_by(|a, b| (&a.file, a.line, &a.rule).cmp(&(&b.file, b.line, &b.rule)));
@@ -260,7 +279,11 @@ pub fn run(cfg: &ResolvedConfig, args: &ScanArgs, cwd: &Path, git: bool) -> Repo
 /// `report.findings` and carries the Laya second verdict where one was
 /// printed-worthy; it is consumed by the human renderer only, so the JSON
 /// contract in SPEC-006 stays byte-identical when the model is on.
-pub fn render(report: &Report, fmt: Format, judged: &[Option<judge::Verdict>]) -> Vec<String> {
+pub(crate) fn render(
+    report: &Report,
+    fmt: Format,
+    judged: &[Option<judge::Verdict>],
+) -> Vec<String> {
     match fmt {
         Format::Json => vec![envelope(report)],
         Format::Jsonl => report
@@ -318,7 +341,7 @@ fn human(report: &Report, judged: &[Option<judge::Verdict>]) -> Vec<String> {
 }
 
 /// The `--format json` stdout contract (SPEC-006), verbatim keys.
-pub fn envelope(report: &Report) -> String {
+pub(crate) fn envelope(report: &Report) -> String {
     let suppressed: Vec<_> = report
         .findings
         .iter()
@@ -372,7 +395,7 @@ mod tests {
 
     fn args(paths: &[&str]) -> ScanArgs {
         ScanArgs {
-            paths: paths.iter().map(|p| p.to_string()).collect(),
+            paths: paths.iter().map(std::string::ToString::to_string).collect(),
             linters: Some("none".to_string()),
             ..ScanArgs::default()
         }

@@ -17,13 +17,14 @@ use ast_grep_language::{LanguageExt, SupportLang};
 /// One language: its canonical name, the grammar that parses it, and the
 /// outermost comment node kinds of that grammar (measured per grammar, see
 /// `rules/README.md`).
+#[derive(Debug)]
 pub struct LangSpec {
     pub name: &'static str,
     pub lang: SupportLang,
     pub comment_kinds: &'static [&'static str],
 }
 
-use SupportLang::{Bash, Cpp, Go, Java, JavaScript, Nix, Python, Rust, Tsx, TypeScript, Yaml, C};
+use SupportLang::{Bash, C, Cpp, Go, Java, JavaScript, Nix, Python, Rust, Tsx, TypeScript, Yaml};
 
 /// rust and java have the two-kind split; every other v1 language has a
 /// single `comment` kind.
@@ -92,6 +93,7 @@ pub(crate) static LANGS: &[LangSpec] = &[
 
 /// One extracted comment with its position and the identifiers of the code
 /// that follows it — the neighbour `comment-paraphrase` compares against.
+#[derive(Debug)]
 pub struct Comment {
     pub text: String,
     /// 1-based
@@ -120,7 +122,13 @@ fn is_ident_kind(kind: &str) -> bool {
     )
 }
 
-fn collect_ids(node: Node<'_, StrDoc<SupportLang>>, out: &mut Vec<String>, depth: u32, cap: u32) {
+/// A zero-based ast-grep position as the one-based `u32` findings carry,
+/// saturating on files longer than `u32::MAX` lines.
+fn line_no(zero_based: usize) -> u32 {
+    u32::try_from(zero_based).map_or(u32::MAX, |n| n.saturating_add(1))
+}
+
+fn collect_ids(node: &Node<'_, StrDoc<SupportLang>>, out: &mut Vec<String>, depth: u32, cap: u32) {
     if out.len() >= 24 || depth > cap {
         return;
     }
@@ -128,7 +136,7 @@ fn collect_ids(node: Node<'_, StrDoc<SupportLang>>, out: &mut Vec<String>, depth
         out.push(node.text().to_string());
     }
     for child in node.children() {
-        collect_ids(child, out, depth + 1, cap);
+        collect_ids(&child, out, depth + 1, cap);
     }
 }
 
@@ -159,6 +167,7 @@ impl Walk {
 
 /// Extract every comment of `source` under `spec`, in source order, each
 /// with the identifiers of the code that follows it.
+#[must_use]
 pub fn extract(spec: &LangSpec, source: &str) -> Vec<Comment> {
     let kind_ids: Vec<u16> = spec
         .comment_kinds
@@ -174,7 +183,7 @@ pub fn extract(spec: &LangSpec, source: &str) -> Vec<Comment> {
     for node in &nodes {
         let start = node.start_pos();
         let end = node.end_pos();
-        let end_line = end.line() as u32 + 1;
+        let end_line = line_no(end.line());
         // YAML keys live six wrapper levels deep; the previous depth cap
         // hid every key, which is why config files were invisible to
         // comment-paraphrase. Other languages keep the shallow cap: going
@@ -184,8 +193,8 @@ pub fn extract(spec: &LangSpec, source: &str) -> Vec<Comment> {
         let next_code_ids = next_ids_after(&root, node.range().start, spec.name == "yaml");
         out.push(Comment {
             text: node.text().to_string(),
-            line: start.line() as u32 + 1,
-            col: start.column(node) as u32 + 1,
+            line: line_no(start.line()),
+            col: line_no(start.column(node)),
             end_line,
             next_code_ids,
         });
@@ -223,52 +232,52 @@ fn docstrings(root: &Node<'_, StrDoc<SupportLang>>) -> Vec<Comment> {
                 .children()
                 .find(|c| c.is_named() && c.kind() != "comment");
             if let Some(stmt) = first.filter(|s| s.kind() == "expression_statement") {
-                let mut named = stmt.children().filter(|c| c.is_named());
-                if let (Some(string), None) = (named.next(), named.next()) {
-                    if string.kind() == "string" {
-                        let start = string.start_pos();
-                        // The owner definition's identifier, when the
-                        // docstring hangs off a class or function block.
-                        let owner_name = node.parent().and_then(|p| {
-                            p.children()
-                                .find(|c| c.kind() == "identifier")
-                                .map(|c| c.text().to_string())
-                        });
-                        // A module docstring whose module wraps exactly one
-                        // definition effectively names that definition —
-                        // corpus offenders are single-class module headers
-                        // restating the class name.
-                        let owner_name = match (owner_name, node.kind().as_ref()) {
-                            (Some(name), _) => Some(name),
-                            (None, "module") => {
-                                let defs: Vec<_> = node
-                                    .children()
-                                    .filter(|c| {
-                                        matches!(
-                                            c.kind().as_ref(),
-                                            "function_definition" | "class_definition"
-                                        )
-                                    })
-                                    .collect();
-                                (defs.len() == 1)
-                                    .then(|| defs.first())
-                                    .flatten()
-                                    .and_then(|d| {
-                                        d.children()
-                                            .find(|c| c.kind() == "identifier")
-                                            .map(|c| c.text().to_string())
-                                    })
-                            }
-                            (None, _) => None,
-                        };
-                        out.push(Comment {
-                            text: string.text().to_string(),
-                            line: start.line() as u32 + 1,
-                            col: start.column(&string) as u32 + 1,
-                            end_line: string.end_pos().line() as u32 + 1,
-                            next_code_ids: owner_name.into_iter().collect(),
-                        });
-                    }
+                let mut named = stmt.children().filter(ast_grep_core::Node::is_named);
+                if let (Some(string), None) = (named.next(), named.next())
+                    && string.kind() == "string"
+                {
+                    let start = string.start_pos();
+                    // The owner definition's identifier, when the
+                    // docstring hangs off a class or function block.
+                    let owner_name = node.parent().and_then(|p| {
+                        p.children()
+                            .find(|c| c.kind() == "identifier")
+                            .map(|c| c.text().to_string())
+                    });
+                    // A module docstring whose module wraps exactly one
+                    // definition effectively names that definition —
+                    // corpus offenders are single-class module headers
+                    // restating the class name.
+                    let owner_name = match (owner_name, node.kind().as_ref()) {
+                        (Some(name), _) => Some(name),
+                        (None, "module") => {
+                            let defs: Vec<_> = node
+                                .children()
+                                .filter(|c| {
+                                    matches!(
+                                        c.kind().as_ref(),
+                                        "function_definition" | "class_definition"
+                                    )
+                                })
+                                .collect();
+                            (defs.len() == 1)
+                                .then(|| defs.first())
+                                .flatten()
+                                .and_then(|d| {
+                                    d.children()
+                                        .find(|c| c.kind() == "identifier")
+                                        .map(|c| c.text().to_string())
+                                })
+                        }
+                        (None, _) => None,
+                    };
+                    out.push(Comment {
+                        text: string.text().to_string(),
+                        line: line_no(start.line()),
+                        col: line_no(start.column(&string)),
+                        end_line: line_no(string.end_pos().line()),
+                        next_code_ids: owner_name.into_iter().collect(),
+                    });
                 }
             }
         }
@@ -307,7 +316,7 @@ fn next_ids_after(root: &Node<'_, StrDoc<SupportLang>>, offset: usize, deep: boo
             // deep also drops the depth cap: a nested key sits nine wrapper
             // levels down (stream > document > mapping > pair > block_node
             // > mapping > pair > flow_node > plain > string_scalar).
-            collect_ids(node, &mut ids, 0, if deep { 16 } else { 4 });
+            collect_ids(&node, &mut ids, 0, if deep { 16 } else { 4 });
             break;
         }
         for child in node.children().collect::<Vec<_>>().into_iter().rev() {
@@ -319,6 +328,7 @@ fn next_ids_after(root: &Node<'_, StrDoc<SupportLang>>, offset: usize, deep: boo
 
 /// Map a file path to its spec by extension. Unknown → `None` (the caller
 /// skips the file).
+#[must_use]
 pub fn spec_for_path(path: &str) -> Option<&'static LangSpec> {
     let ext = path.rsplit_once('.')?.1;
     let name = match ext {
@@ -409,7 +419,7 @@ fn inc() {}
             comments.iter().map(|c| c.text.clone()).collect::<Vec<_>>()
         );
         for (i, c) in comments.iter().enumerate() {
-            assert_eq!(c.line, i as u32 + 1);
+            assert_eq!(c.line, line_no(i));
         }
     }
 

@@ -2,7 +2,7 @@
 //! rule that matched it.
 //!
 //! agent-slop's rules are lexical: `slop/comment-history` fires on a phrase,
-//! not on whether the comment is actually doing its job. Laya is a ModernBERT
+//! not on whether the comment is actually doing its job. Laya is a `ModernBERT`
 //! classifier fine-tuned on 11k real review remarks and answers two questions
 //! about a snippet: should this comment stay, be reworded or go; and does this
 //! bare code warrant a comment at all.
@@ -24,7 +24,7 @@
 //! |---|---|
 //! | verdict, 3-way choice | 0.628 on 250 held-out rows; always-keep scores 0.664 |
 //! | verdict, delete-vs-keep | 0.700 binary, against a 0.656 always-keep baseline |
-//! | needs_comment | AUROC 0.832-0.871 on held-out rows, 3/6 on hand probes |
+//! | `needs_comment` | AUROC 0.832-0.871 on held-out rows, 3/6 on hand probes |
 //!
 //! The verdict head also inherits the length confound of its training data
 //! (kept comments: median 44 words; deleted: 17), so it calls a short,
@@ -37,7 +37,7 @@
 //! details are load-bearing and were measured against the served checkpoints,
 //! not assumed:
 //!
-//! * A choice option is rendered as `"<key>: <description>"` (rl_common.py
+//! * A choice option is rendered as `"<key>: <description>"` (`rl_common.py`
 //!   `render_options`). Sending bare keys or bare descriptions — both tried —
 //!   moves 11 of 25 verdicts on identical comments.
 //! * Both laya-cli and laya-gateway answer with `Content-Length` and honour
@@ -69,9 +69,18 @@ const VERDICT_INS: &str = "Weighing both sides: should this comment stay in the 
                            non-obvious fact in the right place.";
 
 const VERDICT: [(&str, &str); 3] = [
-    ("delete", "the comment adds nothing a reader cannot get from the code, or narrates the past, an alternative, another module or deployment"),
-    ("rewrite", "the comment has content worth keeping but its form is wrong (too long, hedging, contrasts, wrong location)"),
-    ("keep", "the comment carries a non-obvious fact, constraint or consequence in the right place"),
+    (
+        "delete",
+        "the comment adds nothing a reader cannot get from the code, or narrates the past, an alternative, another module or deployment",
+    ),
+    (
+        "rewrite",
+        "the comment has content worth keeping but its form is wrong (too long, hedging, contrasts, wrong location)",
+    ),
+    (
+        "keep",
+        "the comment carries a non-obvious fact, constraint or consequence in the right place",
+    ),
 ];
 
 /// The needs question, from the wave-7 builder. Its states carry no comment
@@ -83,7 +92,10 @@ const NEEDS_INS: &str = "Does this code need a comment it does not have? yes whe
                          say.";
 
 const NEEDS: [(&str, &str); 2] = [
-    ("yes", "the code hides a why: constraint, magic number reason, workaround cause, or subtle dependency"),
+    (
+        "yes",
+        "the code hides a why: constraint, magic number reason, workaround cause, or subtle dependency",
+    ),
     ("no", "the code reads plainly; a comment would restate it"),
 ];
 
@@ -136,6 +148,7 @@ pub struct Verdict {
 
 impl Verdict {
     /// `delete 0.91 (delete .91 / rewrite .02 / keep .07)`
+    #[must_use]
     pub fn render(&self) -> String {
         let dist = self
             .distribution
@@ -184,10 +197,21 @@ fn ask(
     let (label, confidence) = distribution
         .iter()
         .max_by(|a, b| a.1.total_cmp(&b.1))
-        .map(|(k, p)| (k.clone(), *p))
-        .unwrap_or((String::from("?"), 0.0));
-    let floor = if options.len() == 2 { cfg.judge.needs_min_p } else { cfg.judge.min_confidence };
-    Ok(if confidence >= floor { Some(Verdict { label, confidence, distribution }) } else { None })
+        .map_or((String::from("?"), 0.0), |(k, p)| (k.clone(), *p));
+    let floor = if options.len() == 2 {
+        cfg.judge.needs_min_p
+    } else {
+        cfg.judge.min_confidence
+    };
+    Ok(if confidence >= floor {
+        Some(Verdict {
+            label,
+            confidence,
+            distribution,
+        })
+    } else {
+        None
+    })
 }
 
 fn remaining(deadline: Instant) -> Option<Duration> {
@@ -199,6 +223,7 @@ fn remaining(deadline: Instant) -> Option<Duration> {
 /// about the mined corpus and not about the repository being scanned. Dropping
 /// it costs 2 points of choice accuracy on held-out rows (0.628 -> 0.608),
 /// which is the price of not asserting something untrue to the model.
+#[must_use]
 pub fn verdict_state(path: &str, comment: &str, code: &str, repo: &str) -> String {
     format!(
         "File: {} ({})\nRepo: {}\nComment:\n{}\n\nCode directly below:\n{}",
@@ -211,6 +236,7 @@ pub fn verdict_state(path: &str, comment: &str, code: &str, repo: &str) -> Strin
 }
 
 /// The state, in the wave-7 layout: no comment exists yet, so none is shown.
+#[must_use]
 pub fn needs_state(path: &str, code: &str, repo: &str) -> String {
     format!(
         "File: {} ({})\nRepo: {}\nCode (no comment yet):\n{}",
@@ -259,6 +285,7 @@ fn is_comment_line(line: &str) -> bool {
 /// The code a comment sits above: the next lines that are not themselves
 /// comments. The training states were built from diff hunks the same way —
 /// added and context lines, comment lines dropped, 120 characters per line.
+#[must_use]
 pub fn code_below(content: &str, after_line: u32) -> String {
     let mut out: Vec<String> = Vec::new();
     for line in content.lines().skip(after_line as usize) {
@@ -289,6 +316,7 @@ pub fn code_below(content: &str, after_line: u32) -> String {
 /// file and 15 seconds. A whole-repo pass passes its own number, because the
 /// cap that protects the hook would otherwise truncate an audit at four
 /// comments and still look like it finished.
+#[must_use]
 pub fn annotate(
     cfg: &ResolvedConfig,
     findings: &[Finding],
@@ -322,7 +350,9 @@ pub fn annotate(
         let content = cache
             .entry(f.file.clone())
             .or_insert_with(|| std::fs::read_to_string(root.join(&f.file)).ok());
-        let Some(content) = content.as_ref() else { continue };
+        let Some(content) = content.as_ref() else {
+            continue;
+        };
         let state = verdict_state(&f.file, &f.snippet, &code_below(content, f.end_line), &repo);
         asked += 1;
         if let Ok(Some(v)) = ask(cfg, &state, VERDICT_INS, &VERDICT, deadline) {
@@ -332,6 +362,7 @@ pub fn annotate(
     out
 }
 
+#[must_use]
 pub fn is_comment_rule(rule_id: &str) -> bool {
     rule_id
         .strip_prefix("slop/")
@@ -339,7 +370,7 @@ pub fn is_comment_rule(rule_id: &str) -> bool {
 }
 
 /// A run of added lines carrying no comment of their own — the shape the
-/// needs_comment axis was trained on (wave-7 positives are hunks a reviewer
+/// `needs_comment` axis was trained on (wave-7 positives are hunks a reviewer
 /// demanded a comment for; negatives are hunks of the same repositories that
 /// drew no such demand).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -362,6 +393,7 @@ pub struct NeedsHit {
 }
 
 impl NeedsHit {
+    #[must_use]
     pub fn render(&self) -> String {
         let first = self.code.lines().next().unwrap_or_default().trim();
         let shown: String = if first.chars().count() > 72 {
@@ -383,8 +415,9 @@ impl NeedsHit {
 /// give the post-image line number, so a hit points at a line in the file the
 /// agent just wrote rather than at a diff offset.
 ///
-/// `only` restricts the diff to one path (the PostToolUse leg already knows
+/// `only` restricts the diff to one path (the `PostToolUse` leg already knows
 /// it); `None` walks the whole tree (the scan leg).
+#[must_use]
 pub fn added_code_chunks(
     root: &Path,
     base: &str,
@@ -429,7 +462,11 @@ pub fn added_code_chunks(
             .collect::<Vec<_>>()
             .join("\n");
         if code.chars().count() >= MIN_CHUNK_CHARS {
-            chunks.push(CodeChunk { file: file.to_string(), line: run[0].0, code });
+            chunks.push(CodeChunk {
+                file: file.to_string(),
+                line: run[0].0,
+                code,
+            });
         }
         run.clear();
     };
@@ -438,8 +475,7 @@ pub fn added_code_chunks(
         if let Some(rest) = raw.strip_prefix("+++ ") {
             file = rest
                 .rsplit_once('\t')
-                .map(|(p, _)| p)
-                .unwrap_or(rest)
+                .map_or(rest, |(p, _)| p)
                 .strip_prefix("b/")
                 .unwrap_or(rest)
                 .to_string();
@@ -489,6 +525,7 @@ pub fn added_code_chunks(
 /// plainly, and printing it under a header that says the code may be
 /// missing a comment inverts the answer: the confidence floor decides
 /// whether to speak, the answer decides what to say.
+#[must_use]
 pub fn needs(
     cfg: &ResolvedConfig,
     chunks: &[CodeChunk],
@@ -521,6 +558,7 @@ pub fn needs(
 /// the file it just watched; this asks about a whole diff, which is the case
 /// where a branch is mostly non-comment code and the comment axis has nothing
 /// to say. The caller resolves the repository root and base commit.
+#[must_use]
 pub fn audit_needs(
     cfg: &ResolvedConfig,
     root: &Path,
@@ -543,10 +581,12 @@ pub fn audit_needs(
 /// The repository's own name, which the states carry the way the mined
 /// training states carried theirs. A checkout under a worktree or a
 /// subdirectory falls back to the basename of the root.
+#[must_use]
 pub fn repo_name(root: &Path) -> String {
-    root.file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| String::from("repo"))
+    root.file_name().map_or_else(
+        || String::from("repo"),
+        |n| n.to_string_lossy().into_owned(),
+    )
 }
 
 // --------------------------------------------------------------------------- wire format
@@ -570,14 +610,12 @@ fn request_body(state: &str, instructions: &str, options: &[(&str, &str)]) -> St
 /// answer did not rank it, and inventing a rank is how a model gets to
 /// influence a gate.
 fn probability(answer: &serde_json::Value, key: &str, desc: &str) -> f64 {
-    let probs = answer
-        .get("probabilities")
-        .and_then(|p| p.as_object());
+    let probs = answer.get("probabilities").and_then(|p| p.as_object());
     let Some(probs) = probs else { return 0.0 };
     probs
         .get(&format!("{key}: {desc}"))
         .or_else(|| probs.get(key))
-        .and_then(|v| v.as_f64())
+        .and_then(serde_json::Value::as_f64)
         .unwrap_or(0.0)
 }
 
@@ -587,10 +625,8 @@ fn parse_choice(
 ) -> Result<serde_json::Value, Unavailable> {
     let body = response
         .split_once("\r\n\r\n")
-        .map(|(_head, body)| body)
-        .unwrap_or(response);
-    let json: serde_json::Value =
-        serde_json::from_str(body).map_err(|_| Unavailable::Malformed)?;
+        .map_or(response, |(_head, body)| body);
+    let json: serde_json::Value = serde_json::from_str(body).map_err(|_| Unavailable::Malformed)?;
     let answer = json
         .get("answers")
         .and_then(|a| a.get("q"))
@@ -600,8 +636,7 @@ fn parse_choice(
     let ranked = answer
         .get("probabilities")
         .and_then(|p| p.as_object())
-        .map(|p| p.len())
-        .unwrap_or(0);
+        .map_or(0, serde_json::Map::len);
     if ranked < options.len() {
         return Err(Unavailable::Malformed);
     }
@@ -613,9 +648,7 @@ fn parse_choice(
 /// general URL parser would be a dependency to accept a string the config
 /// already constrains.
 fn post(url: &str, body: &str, budget: Duration) -> Result<String, Unavailable> {
-    let rest = url
-        .strip_prefix("http://")
-        .ok_or(Unavailable::Transport)?;
+    let rest = url.strip_prefix("http://").ok_or(Unavailable::Transport)?;
     let (authority, path) = match rest.find('/') {
         Some(i) => (&rest[..i], &rest[i..]),
         None => (rest, "/"),
@@ -629,17 +662,26 @@ fn post(url: &str, body: &str, budget: Duration) -> Result<String, Unavailable> 
         .map_err(|_| Unavailable::Transport)?
         .next()
         .ok_or(Unavailable::Transport)?;
-    let mut stream = TcpStream::connect_timeout(&addr, budget).map_err(|_| Unavailable::Transport)?;
-    stream.set_read_timeout(Some(budget)).map_err(|_| Unavailable::Transport)?;
-    stream.set_write_timeout(Some(budget)).map_err(|_| Unavailable::Transport)?;
+    let mut stream =
+        TcpStream::connect_timeout(&addr, budget).map_err(|_| Unavailable::Transport)?;
+    stream
+        .set_read_timeout(Some(budget))
+        .map_err(|_| Unavailable::Transport)?;
+    stream
+        .set_write_timeout(Some(budget))
+        .map_err(|_| Unavailable::Transport)?;
     let request = format!(
         "POST {path} HTTP/1.1\r\nHost: {authority}\r\nContent-Type: application/json\r\n\
          Content-Length: {len}\r\nConnection: close\r\n\r\n{body}",
         len = body.len()
     );
-    stream.write_all(request.as_bytes()).map_err(|_| Unavailable::Transport)?;
+    stream
+        .write_all(request.as_bytes())
+        .map_err(|_| Unavailable::Transport)?;
     let mut raw = Vec::new();
-    stream.read_to_end(&mut raw).map_err(|_| Unavailable::Transport)?;
+    stream
+        .read_to_end(&mut raw)
+        .map_err(|_| Unavailable::Transport)?;
     let text = String::from_utf8_lossy(&raw).into_owned();
     let status = text
         .split_whitespace()
@@ -655,8 +697,8 @@ fn post(url: &str, body: &str, budget: Duration) -> Result<String, Unavailable> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeMap;
     use crate::telemetry::{self, RowInput};
+    use std::collections::BTreeMap;
 
     /// Options must carry the `key: description` spelling the checkpoint was
     /// trained on. Bare keys move verdicts: 11 of 25 real comments flipped
@@ -701,17 +743,28 @@ mod tests {
 
     #[test]
     fn code_below_caps_like_the_training_states() {
-        let long: String = (0..40).map(|i| format!("line {i} {}", "x".repeat(200))).collect::<Vec<_>>().join("\n");
+        let long: String = (0..40)
+            .map(|i| format!("line {i} {}", "x".repeat(200)))
+            .collect::<Vec<_>>()
+            .join("\n");
         let out = code_below(&long, 0);
         assert!(out.lines().count() <= CODE_LINES);
         // +1 per line for the ellipsis that marks the cut, +1 per join.
         let ceiling = CODE_LINES * (LINE_CAP + 1) + (CODE_LINES - 1);
-        assert!(out.chars().count() <= ceiling, "{} > {ceiling}", out.chars().count());
+        assert!(
+            out.chars().count() <= ceiling,
+            "{} > {ceiling}",
+            out.chars().count()
+        );
     }
 
     #[test]
     fn comment_rule_families_are_the_comment_ones() {
-        for rule in ["slop/comment-history", "slop/comment-paraphrase", "slop/review-jargon"] {
+        for rule in [
+            "slop/comment-history",
+            "slop/comment-paraphrase",
+            "slop/review-jargon",
+        ] {
             assert!(is_comment_rule(rule), "{rule} should be judged");
         }
         // A `todo-no-condition` finding's defect is the condition it fails to
@@ -728,7 +781,10 @@ mod tests {
             "HTTP/1.1 200 OK\r\nContent-Length: 118\r\n\r\n",
             r#"{"answers":{"q":{"type":"choice","probabilities":{"delete: x":0.9,"rewrite: y":0.1}}}}"#
         );
-        assert_eq!(parse_choice(response, &VERDICT), Err(Unavailable::Malformed));
+        assert_eq!(
+            parse_choice(response, &VERDICT),
+            Err(Unavailable::Malformed)
+        );
     }
 
     #[test]
@@ -737,7 +793,10 @@ mod tests {
             "HTTP/1.1 200 OK\r\nContent-Length: 999\r\n\r\n",
             r#"{"answers":{"q":{"type":"choice","probabilities":{}}}}"#
         );
-        assert_eq!(parse_choice(response, &VERDICT[..2]), Err(Unavailable::Malformed));
+        assert_eq!(
+            parse_choice(response, &VERDICT[..2]),
+            Err(Unavailable::Malformed)
+        );
     }
 
     #[test]
@@ -747,7 +806,7 @@ mod tests {
         });
         assert!((probability(&answer, "delete", "d") - 0.7).abs() < 1e-9);
         assert!((probability(&answer, "keep", "k") - 0.1).abs() < 1e-9);
-        assert_eq!(probability(&answer, "rewrite", "absent"), 0.0);
+        assert!(probability(&answer, "rewrite", "absent").abs() < f64::EPSILON);
     }
 
     /// The Stop gate has 15 s and must work with the model stopped: an
@@ -756,20 +815,34 @@ mod tests {
     fn an_unreachable_endpoint_yields_no_verdict() {
         let cfg = judge_cfg("http://127.0.0.1:1/v1/systemone", 200);
         let deadline = Instant::now() + Duration::from_millis(200);
-        assert!(annotate(&cfg, &[finding("slop/comment-history")], Path::new("."), deadline, None)
+        assert!(
+            annotate(
+                &cfg,
+                &[finding("slop/comment-history")],
+                Path::new("."),
+                deadline,
+                None
+            )
             .iter()
-            .all(Option::is_none));
+            .all(Option::is_none)
+        );
     }
 
     /// A judge that is switched off must not even open a socket: the
-    /// PostToolUse leg runs on every tool call.
+    /// `PostToolUse` leg runs on every tool call.
     #[test]
     fn a_disabled_judge_asks_nothing() {
         let mut cfg = judge_cfg("http://127.0.0.1:1/v1/systemone", 200);
         cfg.judge.enabled = false;
         let deadline = Instant::now() + Duration::from_millis(200);
         assert_eq!(
-            annotate(&cfg, &[finding("slop/comment-history")], Path::new("."), deadline, None),
+            annotate(
+                &cfg,
+                &[finding("slop/comment-history")],
+                Path::new("."),
+                deadline,
+                None
+            ),
             vec![None]
         );
     }
@@ -779,7 +852,13 @@ mod tests {
         let cfg = judge_cfg("http://127.0.0.1:1/v1/systemone", 200);
         let deadline = Instant::now();
         assert_eq!(
-            annotate(&cfg, &[finding("slop/comment-history")], Path::new("."), deadline, None),
+            annotate(
+                &cfg,
+                &[finding("slop/comment-history")],
+                Path::new("."),
+                deadline,
+                None
+            ),
             vec![None]
         );
     }
@@ -799,7 +878,7 @@ mod tests {
 
     /// `--max-verdicts 0` must not be read as a cap of zero. The count of
     /// requests it produces is asserted against a live stub in
-    /// tests/judge_leg.rs, because with a dead endpoint both readings
+    /// `tests/judge_leg.rs`, because with a dead endpoint both readings
     /// terminate silently and neither is observable here.
     #[test]
     fn a_zero_cap_does_not_short_circuit_the_leg() {
@@ -808,7 +887,10 @@ mod tests {
         let deadline = Instant::now() + Duration::from_millis(300);
         // The output is aligned with the input whatever the cap, so this
         // only proves the leg ran to the end of the findings.
-        assert_eq!(annotate(&cfg, &findings, Path::new("."), deadline, Some(0)).len(), 3);
+        assert_eq!(
+            annotate(&cfg, &findings, Path::new("."), deadline, Some(0)).len(),
+            3
+        );
     }
 
     /// A finding in a file that is not on disk cannot be judged; the leg must
@@ -819,7 +901,10 @@ mod tests {
         let mut f = finding("slop/comment-history");
         f.file = String::from("does/not/exist.nix");
         let deadline = Instant::now() + Duration::from_millis(200);
-        assert_eq!(annotate(&cfg, &[f], Path::new("."), deadline, None), vec![None]);
+        assert_eq!(
+            annotate(&cfg, &[f], Path::new("."), deadline, None),
+            vec![None]
+        );
     }
 
     #[test]
@@ -833,7 +918,10 @@ mod tests {
                 (String::from("keep"), 0.07),
             ],
         };
-        assert_eq!(v.render(), "delete 0.91 (delete 0.91 / rewrite 0.02 / keep 0.07)");
+        assert_eq!(
+            v.render(),
+            "delete 0.91 (delete 0.91 / rewrite 0.02 / keep 0.07)"
+        );
     }
 
     fn judge_cfg(url: &str, timeout_ms: u64) -> ResolvedConfig {

@@ -1,5 +1,5 @@
 //! The Laya second verdict end to end, through the built binary's
-//! PostToolUse leg: a stub endpoint answers, the envelope carries the
+//! `PostToolUse` leg: a stub endpoint answers, the envelope carries the
 //! verdict under its own finding, and the finding line is byte-identical to
 //! the run with the judge off.
 //!
@@ -23,8 +23,8 @@ use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
@@ -64,8 +64,7 @@ impl Scratch {
         );
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map(|d| d.subsec_nanos())
-            .unwrap_or(0);
+            .map_or(0, |d| d.subsec_nanos());
         let root = std::env::temp_dir().join(format!(
             "agent-slop-judge-{name}-{}-{nanos}",
             std::process::id()
@@ -204,14 +203,18 @@ fn stub(dist: Vec<f64>) -> (u16, Arc<AtomicUsize>) {
                 .and_then(|h| h.split_whitespace().next())
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0);
-            let mut body = head.split_once("\r\n\r\n").map(|(_, b)| b.to_string()).unwrap_or_default();
+            let mut body = head
+                .split_once("\r\n\r\n")
+                .map(|(_, b)| b.to_string())
+                .unwrap_or_default();
             while body.len() < want {
                 match stream.read(&mut buf) {
                     Ok(0) | Err(_) => break,
                     Ok(k) => body.push_str(&String::from_utf8_lossy(&buf[..k])),
                 }
             }
-            let request: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+            let request: serde_json::Value =
+                serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
             let criteria = request["questions"]["q"]["criteria"]
                 .as_array()
                 .cloned()
@@ -219,7 +222,10 @@ fn stub(dist: Vec<f64>) -> (u16, Arc<AtomicUsize>) {
             let mut probabilities = serde_json::Map::new();
             for (i, c) in criteria.iter().enumerate() {
                 let p = dist.get(i).copied().unwrap_or(0.0);
-                probabilities.insert(c.as_str().unwrap_or_default().to_string(), serde_json::json!(p));
+                probabilities.insert(
+                    c.as_str().unwrap_or_default().to_string(),
+                    serde_json::json!(p),
+                );
             }
             let answer = serde_json::json!({
                 "model": "laya-stub",
@@ -270,9 +276,14 @@ fn a_verdict_annotates_the_finding_without_changing_it() {
     let with = s.hook(&payload("a.py"), &config_for(port, 0.9));
 
     assert_eq!(with.code, 0, "stderr: {}", with.stderr);
-    assert!(with.stdout.contains("laya: delete 0.93"), "stdout: {}", with.stdout);
     assert!(
-        with.stdout.contains("(delete 0.93 / rewrite 0.04 / keep 0.03)"),
+        with.stdout.contains("laya: delete 0.93"),
+        "stdout: {}",
+        with.stdout
+    );
+    assert!(
+        with.stdout
+            .contains("(delete 0.93 / rewrite 0.04 / keep 0.03)"),
         "the full distribution belongs in the line: {}",
         with.stdout
     );
@@ -371,7 +382,11 @@ fn added_code_can_be_asked_about_a_missing_comment() {
         "an advisory needs line should appear for a comment-free run of added code: {}",
         run.stdout
     );
-    assert!(run.stdout.contains("laya: yes 0.91"), "stdout: {}", run.stdout);
+    assert!(
+        run.stdout.contains("laya: yes 0.91"),
+        "stdout: {}",
+        run.stdout
+    );
 }
 
 /// A confident NO is the model saying the code reads plainly. Printing it
@@ -433,7 +448,10 @@ fn the_scan_cap_decides_how_many_comments_are_asked() {
 
     let all = run("0");
     let all_n = served.swap(0, Ordering::SeqCst);
-    assert!(all_n >= 3, "0 means every comment, asked {all_n}\nscan output:\n{all}");
+    assert!(
+        all_n >= 3,
+        "0 means every comment, asked {all_n}\nscan output:\n{all}"
+    );
     assert_eq!(all.matches("laya: ").count(), all_n, "one line per answer");
 
     let one = run("1");
@@ -442,7 +460,7 @@ fn the_scan_cap_decides_how_many_comments_are_asked() {
 }
 
 /// The needs half has to be reachable from the audit command, not only from
-/// the PostToolUse leg. On a branch whose commits are mostly non-comment
+/// the `PostToolUse` leg. On a branch whose commits are mostly non-comment
 /// code the comment axis has nothing to say — the comment findings are zero,
 /// so a verdict run returns an empty audit that looks like a broken feature.
 /// The needs axis needs no rule to fire, which is exactly why it is the one
@@ -460,7 +478,15 @@ fn the_audit_command_reaches_the_needs_axis() {
         "def lease(path, retries):\n    handle = open(path)\n    deadline = 4321\n    return handle, deadline\n",
     );
     let out = Command::new(env!("CARGO_BIN_EXE_agent-slop"))
-        .args(["scan", "--linters", "none", "--format", "human", "--since", "HEAD"])
+        .args([
+            "scan",
+            "--linters",
+            "none",
+            "--format",
+            "human",
+            "--since",
+            "HEAD",
+        ])
         .args(["--max-verdicts", "0", "--deadline-ms", "30000"])
         .current_dir(&s.repo)
         .env("XDG_CACHE_HOME", &s.cache)
@@ -471,7 +497,11 @@ fn the_audit_command_reaches_the_needs_axis() {
         .output()
         .expect("run scan");
     let text = String::from_utf8_lossy(&out.stdout).into_owned();
-    assert_eq!(served.load(Ordering::SeqCst), 1, "the audit asked once: {text}");
+    assert_eq!(
+        served.load(Ordering::SeqCst),
+        1,
+        "the audit asked once: {text}"
+    );
     assert!(
         text.contains("laya/needs-comment") && text.contains("laya: yes 0.91"),
         "an audit over code with no findings still has to produce the needs axis: {text}"

@@ -33,6 +33,7 @@ const REASON_CAP: usize = 160;
 /// a per-rule path there buys nothing; the specific path rides in `detail`.
 const NIX_SURFACE: &str = "pkgs/agent-slop/rules/ (rule corpus)";
 
+#[derive(Debug)]
 pub struct RowInput<'a> {
     pub event: &'a str,
     pub harness: &'a str,
@@ -60,13 +61,13 @@ fn truncate(s: &str, cap: usize) -> String {
 
 /// The digest's project key is the checkout's directory name, matching
 /// what the recorder writes.
+#[must_use]
 pub fn project_of(cwd: &Path) -> String {
     cwd.file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "unknown".into())
+        .map_or_else(|| "unknown".into(), |n| n.to_string_lossy().into_owned())
 }
 
-fn defect(item: String, detail: String, count: usize, ts: &str) -> serde_json::Value {
+fn defect(item: &str, detail: &str, count: usize, ts: &str) -> serde_json::Value {
     serde_json::json!({
         "category": "agent_behaviour",
         "item": item,
@@ -112,8 +113,8 @@ fn defects(input: &RowInput, ts: &str) -> Vec<serde_json::Value> {
             .first()
             .expect("a rule key exists because a finding produced it");
         out.push(defect(
-            (*rule).to_string(),
-            format!(
+            rule,
+            &format!(
                 "{rule} {}x in {} files, top '{}:{}' [{probe}]",
                 hits.len(),
                 files.len(),
@@ -135,8 +136,8 @@ fn defects(input: &RowInput, ts: &str) -> Vec<serde_json::Value> {
             .unwrap_or_default();
         let family = rule.strip_prefix("slop/").unwrap_or(rule);
         out.push(defect(
-            format!("slop/suppressed:{family}"),
-            format!(
+            &format!("slop/suppressed:{family}"),
+            &format!(
                 "suppressed {}x, reason '{reason}' at '{}:{}' [{probe}]",
                 hits.len(),
                 top.file,
@@ -150,8 +151,8 @@ fn defects(input: &RowInput, ts: &str) -> Vec<serde_json::Value> {
     // the observe-mode signal and lives in `telemetry`.
     if input.blocked {
         out.push(defect(
-            "slop/gate-blocked".to_string(),
-            format!("Stop returned exit 2 [{probe}]"),
+            "slop/gate-blocked",
+            &format!("Stop returned exit 2 [{probe}]"),
             1,
             ts,
         ));
@@ -161,8 +162,8 @@ fn defects(input: &RowInput, ts: &str) -> Vec<serde_json::Value> {
         let dropped = out.len() - (MAX_DEFECTS - 1);
         out.truncate(MAX_DEFECTS - 1);
         out.push(defect(
-            "truncated".to_string(),
-            format!("{dropped} further defect entries dropped at the {MAX_DEFECTS}-entry cap"),
+            "truncated",
+            &format!("{dropped} further defect entries dropped at the {MAX_DEFECTS}-entry cap"),
             dropped,
             ts,
         ));
@@ -170,6 +171,7 @@ fn defects(input: &RowInput, ts: &str) -> Vec<serde_json::Value> {
     out
 }
 
+#[must_use]
 pub fn row(input: &RowInput, ts: &str, date: &str) -> serde_json::Value {
     serde_json::json!({
         "record_kind": "slop_scan",
@@ -214,8 +216,7 @@ pub fn row(input: &RowInput, ts: &str, date: &str) -> serde_json::Value {
 fn utc_now() -> (String, String, String, String) {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+        .map_or(0, |d| d.as_secs());
     let (y, m, d, hh, mm, ss) = civil_from_unix(secs);
     (
         format!("{y:04}-{m:02}-{d:02}T{hh:02}:{mm:02}:{ss:02}Z"),
@@ -228,7 +229,7 @@ fn utc_now() -> (String, String, String, String) {
 /// Howard Hinnant's civil-from-days, so the shard path matches the shell
 /// writers' `date -u` without pulling in a date crate.
 fn civil_from_unix(secs: u64) -> (i64, u32, u32, u32, u32, u32) {
-    let days = (secs / 86_400) as i64;
+    let days = (secs / 86_400).cast_signed();
     let rem = secs % 86_400;
     let z = days + 719_468;
     let era = z.div_euclid(146_097);
@@ -237,8 +238,8 @@ fn civil_from_unix(secs: u64) -> (i64, u32, u32, u32, u32, u32) {
     let y = yoe + era * 400;
     let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
     let mp = (5 * doy + 2) / 153;
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    let d = u32::try_from(doy - (153 * mp + 2) / 5 + 1).unwrap_or(1);
+    let m = u32::try_from(if mp < 10 { mp + 3 } else { mp - 9 }).unwrap_or(1);
     let y = if m <= 2 { y + 1 } else { y };
     (
         y,
@@ -253,6 +254,7 @@ fn civil_from_unix(secs: u64) -> (i64, u32, u32, u32, u32, u32) {
 /// `$HOME/reviews/<project>/agent-feedback/<YYYY>/<MM>/<YYYY-MM-DD>.jsonl`,
 /// hardcoded the same way both shell writers hardcode it: three writers on
 /// one shard need one canonical path.
+#[must_use]
 pub fn shard_path(root: &Path, project: &str, year: &str, month: &str, day: &str) -> PathBuf {
     root.join(project)
         .join("agent-feedback")
@@ -267,6 +269,7 @@ fn default_root() -> Option<PathBuf> {
 
 /// Which harness is running us, by the same env test the shell writers
 /// use (`background-tasks-probe.sh:82-85`).
+#[must_use]
 pub fn harness() -> &'static str {
     match std::env::var_os("GROK_SESSION_ID") {
         Some(_) => "grok",
@@ -277,6 +280,7 @@ pub fn harness() -> &'static str {
 /// The row as it will be written, stamped with the current UTC time.
 /// Built separately from writing it so a caller can hold the row, assert
 /// on it, and write it once at the process edge.
+#[must_use]
 pub fn build(input: &RowInput) -> serde_json::Value {
     let (ts, _, _, day) = utc_now();
     row(input, &ts, &day)
@@ -286,6 +290,7 @@ pub fn build(input: &RowInput) -> serde_json::Value {
 /// `project` and `date`, so a row always lands where its own fields say.
 /// Returns the path written, or `None` when anything at all went wrong —
 /// the caller's exit code never depends on this.
+#[must_use]
 pub fn write(row: &serde_json::Value, root: Option<&Path>) -> Option<PathBuf> {
     let root = match root {
         Some(r) => r.to_path_buf(),
@@ -303,6 +308,7 @@ pub fn write(row: &serde_json::Value, root: Option<&Path>) -> Option<PathBuf> {
 
 /// Build and append in one call, for callers with nothing to inspect.
 #[cfg(test)]
+#[must_use]
 pub fn emit(input: &RowInput, root: Option<&Path>) -> Option<PathBuf> {
     write(&build(input), root)
 }
@@ -527,10 +533,12 @@ mod tests {
     fn an_unwritable_root_is_swallowed() {
         let f = vec![finding("slop/comment-history", 1, None)];
         let cwd = Path::new("/home/u/p");
-        assert!(emit(
-            &input(&f, &f, cwd, false),
-            Some(Path::new("/proc/nonexistent"))
-        )
-        .is_none());
+        assert!(
+            emit(
+                &input(&f, &f, cwd, false),
+                Some(Path::new("/proc/nonexistent"))
+            )
+            .is_none()
+        );
     }
 }

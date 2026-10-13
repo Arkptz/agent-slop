@@ -81,24 +81,23 @@ fn strip_markers(mut s: &str) -> (&str, bool) {
 /// included) collapsed to one space, trim, NFC. NFC is load-bearing for
 /// slop/comment-language: Russian "й" has a composed and a decomposed
 /// spelling, and without it one comment yields two fingerprints.
+#[must_use]
 pub fn normalize(snippet: &str) -> String {
     let (s, _) = strip_markers(snippet.trim_start());
     let collapsed = s.split_whitespace().collect::<Vec<_>>().join(" ");
     collapsed.nfc().collect()
 }
 
-/// blake3(rule_id ‖ 0x00 ‖ normalize(snippet)), first 8 bytes as 16
+/// `blake3(rule_id` ‖ 0x00 ‖ normalize(snippet)), first 8 bytes as 16
 /// lowercase hex chars. Truncation collisions are strictly fail-open
 /// (SPEC-006 "Ratchet").
+#[must_use]
 pub fn fingerprint(rule_id: &str, snippet: &str) -> String {
     let mut hasher = blake3::Hasher::new();
     hasher.update(rule_id.as_bytes());
     hasher.update(&[0x00]);
     hasher.update(normalize(snippet).as_bytes());
-    hasher.finalize().as_bytes()[..8]
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
+    hasher.finalize().to_hex()[..16].to_string()
 }
 
 #[cfg(test)]

@@ -23,8 +23,8 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use serde::de::{Deserializer, MapAccess, Visitor};
 use serde::Deserialize;
+use serde::de::{Deserializer, MapAccess, Visitor};
 
 use crate::finding::Severity;
 
@@ -72,6 +72,7 @@ pub enum RuleLevel {
 
 impl RuleLevel {
     /// `off` is no severity at all: the rule does not fire.
+    #[must_use]
     pub fn severity(self) -> Option<Severity> {
         match self {
             RuleLevel::Error => Some(Severity::Error),
@@ -219,6 +220,7 @@ impl ResolvedConfig {
     // Unconsumed until the slop/comment-language matcher ships; that rule
     // is the only reader.
     #[allow(dead_code)]
+    #[must_use]
     pub fn comment_language(&self) -> Option<&str> {
         match self.language.as_deref() {
             Some("") | None => None,
@@ -230,6 +232,7 @@ impl ResolvedConfig {
     /// table for `slop/*` ids. `None` means the rule is off or the id is
     /// foreign and unoverridden — for the latter the caller applies the
     /// linter's own default, never `error`.
+    #[must_use]
     pub fn severity_for(&self, rule_id: &str) -> Option<Severity> {
         if let Some(level) = self.overrides.get(rule_id) {
             return level.severity();
@@ -247,6 +250,7 @@ impl ResolvedConfig {
 /// were demoted to `warning` with the observe → block flip after 12
 /// days of telemetry showed no earned block from either. Changing the
 /// set is a spec amendment, not a config tweak.
+#[must_use]
 pub fn builtin_config() -> ResolvedConfig {
     let rules: BTreeMap<String, RuleLevel> = [
         ("comment-history", RuleLevel::Error),
@@ -287,6 +291,7 @@ pub fn builtin_config() -> ResolvedConfig {
 /// Merge two config tiers from their TOML text. `None` means the tier is
 /// absent. Malformed or mistyped TOML drops that tier with a recorded
 /// reason; it never fails.
+#[must_use]
 pub fn resolve(user: Option<&str>, repo: Option<&str>) -> ResolvedConfig {
     let mut cfg = builtin_config();
     let mut notes = Vec::new();
@@ -327,6 +332,7 @@ pub fn resolve(user: Option<&str>, repo: Option<&str>) -> ResolvedConfig {
 
 /// Read both tiers from disk. A `NotFound` file is the common case and
 /// records nothing; any other read failure drops that tier with a reason.
+#[must_use]
 pub fn load_from_paths(user: Option<&Path>, repo: Option<&Path>) -> ResolvedConfig {
     let (user, mut notes) = read_tier(user, Tier::User);
     let (repo, repo_notes) = read_tier(repo, Tier::Repo);
@@ -341,6 +347,7 @@ pub fn load_from_paths(user: Option<&Path>, repo: Option<&Path>) -> ResolvedConf
 /// Full discovery: user path from `home` (no `$HOME` is normal, not an
 /// error), repo path at the git toplevel of the current directory. Both
 /// may come back absent; the built-ins always stand.
+#[must_use]
 pub fn load() -> ResolvedConfig {
     let (user, repo) = tier_paths();
     load_from_paths(user.as_deref(), repo.as_deref())
@@ -349,6 +356,7 @@ pub fn load() -> ResolvedConfig {
 /// The two file paths `load` reads, user tier first. A caller that must
 /// attribute an effective value to the tier that set it resolves the
 /// tiers one at a time against these (`self-test`).
+#[must_use]
 pub fn tier_paths() -> (Option<PathBuf>, Option<PathBuf>) {
     (
         user_config_path(),
@@ -358,6 +366,7 @@ pub fn tier_paths() -> (Option<PathBuf>, Option<PathBuf>) {
 
 /// `~/.config/agent-slop/config.toml`, or `None` when `$HOME` cannot be
 /// resolved (hooks run under systemd).
+#[must_use]
 pub fn user_config_path() -> Option<PathBuf> {
     home::home_dir().map(|h| h.join(".config").join("agent-slop").join("config.toml"))
 }
@@ -365,6 +374,7 @@ pub fn user_config_path() -> Option<PathBuf> {
 /// `git rev-parse --show-toplevel` of the current directory — the ONLY
 /// place a repo config is read (no per-directory nesting). `None` when git
 /// is absent or the directory is not a repository; both are normal.
+#[must_use]
 pub fn git_toplevel() -> Option<PathBuf> {
     let output = std::process::Command::new("git")
         .args(["rev-parse", "--show-toplevel"])
@@ -830,7 +840,9 @@ select = ["ERA001"]
     fn unknown_rule_name_is_reported_not_fatal() {
         let cfg = resolve(
             None,
-            Some("[slop]\nmode = \"block\"\n\n[slop.rules]\ntypo-family = \"error\"\ncomment-history = \"warning\"\n"),
+            Some(
+                "[slop]\nmode = \"block\"\n\n[slop.rules]\ntypo-family = \"error\"\ncomment-history = \"warning\"\n",
+            ),
         );
         // The rest of the tier still applies.
         assert_eq!(cfg.mode, Mode::Block);
@@ -873,7 +885,10 @@ comment-history = "warning"
             Some(Severity::Warning)
         );
         // Built-in family untouched by the tier.
-        assert_eq!(cfg.severity_for("slop/comment-meta"), Some(Severity::Warning));
+        assert_eq!(
+            cfg.severity_for("slop/comment-meta"),
+            Some(Severity::Warning)
+        );
         // `off` and unoverridden foreign ids resolve to no severity.
         assert_eq!(cfg.severity_for("slop/comment-language"), None);
         assert_eq!(cfg.severity_for("ruff/F401"), None);
@@ -954,6 +969,7 @@ comment-history = "warning"
 // gate for blocking. Housed in `scan`, the gate silently skipped them and a
 // path a project had excluded still blocked the turn.
 
+#[must_use]
 pub fn excluded(cfg: &ResolvedConfig, rel: &str) -> bool {
     cfg.exclude
         .paths
@@ -1003,6 +1019,7 @@ fn star_match(pattern: &str, path: &str) -> bool {
 }
 
 /// A scoped exclude silences named rules under named paths.
+#[must_use]
 pub fn scoped_out(cfg: &ResolvedConfig, rel: &str, rule: &str) -> bool {
     cfg.exclude
         .scoped

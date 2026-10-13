@@ -43,10 +43,7 @@ struct Item {
 /// taste level, so they are reported but never counted with substantive
 /// findings.
 fn is_stylistic(code: &str) -> bool {
-    matches!(
-        code.as_bytes().first(),
-        Some(b'E') | Some(b'W') | Some(b'D') | Some(b'Q')
-    )
+    matches!(code.as_bytes().first(), Some(b'E' | b'W' | b'D' | b'Q'))
 }
 
 /// A clean run prints `[]`; unparsable output yields nothing, which the

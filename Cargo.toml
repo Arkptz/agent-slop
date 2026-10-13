@@ -5,7 +5,7 @@ members = ["crates/*"]
 # Shared package metadata — member crates inherit with `field.workspace = true`.
 [workspace.package]
 version = "1.0.0"
-edition = "2021"
+edition = "2024"
 rust-version = "1.95"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/Arkptz/agent-slop"
@@ -31,7 +31,7 @@ unicode-normalization = "0.1"
 
 # Workspace-wide lints — inherited by each crate via `[lints] workspace = true`.
 [workspace.lints.rust]
-unsafe_code = "warn"
+unsafe_code = "forbid"
 unreachable_pub = "warn"
 missing_debug_implementations = "warn"
 

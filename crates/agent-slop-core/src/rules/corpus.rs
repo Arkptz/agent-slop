@@ -102,6 +102,7 @@ pub struct NoteSection {
 
 /// The full parsed corpus: family name → rule. Families whose file fails
 /// to parse are absent and recorded in `dropped`.
+#[derive(Debug)]
 pub struct Corpus {
     pub rules: BTreeMap<String, RuleFile>,
     pub dropped: Vec<(String, String)>,
@@ -130,6 +131,7 @@ const FILES: [(&str, &str); 16] = [
 impl Corpus {
     /// Parse every embedded file. Never fails: a bad file is dropped with
     /// its reason recorded.
+    #[must_use]
     pub fn load() -> Corpus {
         let mut rules = BTreeMap::new();
         let mut dropped = Vec::new();

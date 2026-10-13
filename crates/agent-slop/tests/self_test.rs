@@ -28,8 +28,7 @@ impl Scratch {
     fn new(name: &str) -> Scratch {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map(|d| d.subsec_nanos())
-            .unwrap_or(0);
+            .map_or(0, |d| d.subsec_nanos());
         let root = std::env::temp_dir().join(format!(
             "agent-slop-selftest-{name}-{}-{nanos}",
             std::process::id()

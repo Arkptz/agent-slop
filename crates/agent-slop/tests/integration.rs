@@ -65,8 +65,7 @@ impl Scratch {
         );
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map(|d| d.subsec_nanos())
-            .unwrap_or(0);
+            .map_or(0, |d| d.subsec_nanos());
         let root = std::env::temp_dir().join(format!(
             "agent-slop-scenario-{name}-{}-{nanos}",
             std::process::id()
@@ -231,8 +230,10 @@ fn explain_prints_the_rule_note_and_exception_from_the_corpus() {
     assert!(out.status.success(), "explain exit: {:?}", out.status);
     let text = String::from_utf8_lossy(&out.stdout);
 
-    let corpus: toml::Value =
-        toml::from_str(include_str!("../../agent-slop-core/rules/comment-meta.toml")).expect("corpus parses");
+    let corpus: toml::Value = toml::from_str(include_str!(
+        "../../agent-slop-core/rules/comment-meta.toml"
+    ))
+    .expect("corpus parses");
     let note = corpus["note"]["text"].as_str().expect("note.text").trim();
     let shape = corpus["exception"]["shape"]
         .as_str()

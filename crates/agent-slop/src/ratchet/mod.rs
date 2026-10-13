@@ -11,7 +11,7 @@
 //! empties `git diff --name-only HEAD`, which would make the session's own
 //! slop its baseline; and with an empty baseline every finding in an
 //! inherited untracked file counts as added forever. So the baseline is
-//! pinned once at SessionStart and read back at Stop, and when that state
+//! pinned once at `SessionStart` and read back at Stop, and when that state
 //! is missing, untracked findings are reported but never block:
 //! unattributable debt never blocks.
 //!
@@ -37,20 +37,20 @@ const SESSION_TTL_SECS: u64 = 7 * 24 * 60 * 60;
 /// sees it.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
-pub struct Multiset {
+pub(crate) struct Multiset {
     counts: BTreeMap<String, usize>,
 }
 
 impl Multiset {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::default()
     }
 
-    pub fn add(&mut self, fingerprint: &str) {
+    pub(crate) fn add(&mut self, fingerprint: &str) {
         *self.counts.entry(fingerprint.to_string()).or_insert(0) += 1;
     }
 
-    pub fn from_findings(findings: &[Finding]) -> Self {
+    pub(crate) fn from_findings(findings: &[Finding]) -> Self {
         let mut m = Self::new();
         for f in findings {
             m.add(&f.fingerprint);
@@ -58,14 +58,14 @@ impl Multiset {
         m
     }
 
-    pub fn extend(&mut self, other: &Multiset) {
+    pub(crate) fn extend(&mut self, other: &Multiset) {
         for (fp, n) in &other.counts {
             *self.counts.entry(fp.clone()).or_insert(0) += n;
         }
     }
 
     /// Consume one occurrence; `false` when the baseline has none left.
-    pub fn take(&mut self, fingerprint: &str) -> bool {
+    pub(crate) fn take(&mut self, fingerprint: &str) -> bool {
         match self.counts.get_mut(fingerprint) {
             Some(n) if *n > 0 => {
                 *n -= 1;
@@ -76,11 +76,11 @@ impl Multiset {
     }
 
     #[cfg(test)]
-    pub fn total(&self) -> usize {
+    pub(crate) fn total(&self) -> usize {
         self.counts.values().sum()
     }
 
-    pub fn fingerprints(&self) -> Vec<String> {
+    pub(crate) fn fingerprints(&self) -> Vec<String> {
         self.counts
             .iter()
             .flat_map(|(fp, n)| std::iter::repeat_n(fp.clone(), *n))
@@ -90,7 +90,7 @@ impl Multiset {
 
 /// Findings present now that the baseline does not account for, in source
 /// order. Each baseline occurrence cancels exactly one current finding.
-pub fn added(current: &[Finding], baseline: &Multiset) -> Vec<Finding> {
+pub(crate) fn added(current: &[Finding], baseline: &Multiset) -> Vec<Finding> {
     let mut remaining = baseline.clone();
     current
         .iter()
@@ -101,12 +101,12 @@ pub fn added(current: &[Finding], baseline: &Multiset) -> Vec<Finding> {
 
 /// A path left out of the scan, carried to the `skipped[]` array.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SkippedPath {
+pub(crate) struct SkippedPath {
     pub path: String,
     pub reason: &'static str,
 }
 
-pub struct Repo {
+pub(crate) struct Repo {
     pub root: PathBuf,
 }
 
@@ -125,7 +125,7 @@ fn run_git(dir: &Path, args: &[&str]) -> Option<String> {
 impl Repo {
     /// `None` when git is absent or `dir` is not a work tree — the caller
     /// then runs without a ratchet.
-    pub fn discover(dir: &Path) -> Option<Repo> {
+    pub(crate) fn discover(dir: &Path) -> Option<Repo> {
         let root = run_git(dir, &["rev-parse", "--show-toplevel"])?;
         Some(Repo {
             root: PathBuf::from(root.trim()),
@@ -136,13 +136,13 @@ impl Repo {
         run_git(&self.root, args)
     }
 
-    pub fn rev_parse(&self, rev: &str) -> Option<String> {
+    pub(crate) fn rev_parse(&self, rev: &str) -> Option<String> {
         self.git(&["rev-parse", "--verify", "--quiet", rev])
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
     }
 
-    pub fn merge_base(&self, a: &str, b: &str) -> Option<String> {
+    pub(crate) fn merge_base(&self, a: &str, b: &str) -> Option<String> {
         self.git(&["merge-base", a, b])
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
@@ -152,13 +152,13 @@ impl Repo {
     /// `origin/HEAD`, `main`, `master`. An explicit ref resolves to
     /// `merge-base(<ref>, HEAD)`, never `<ref>` itself, so commits other
     /// people made on the branch are not charged to this session.
-    pub fn resolve_ref(&self, spec: &str) -> Option<String> {
+    pub(crate) fn resolve_ref(&self, spec: &str) -> Option<String> {
         if spec == "auto" {
             for candidate in ["origin/HEAD", "main", "master"] {
-                if self.rev_parse(candidate).is_some() {
-                    if let Some(base) = self.merge_base("HEAD", candidate) {
-                        return Some(base);
-                    }
+                if self.rev_parse(candidate).is_some()
+                    && let Some(base) = self.merge_base("HEAD", candidate)
+                {
+                    return Some(base);
                 }
             }
             return self.rev_parse("HEAD");
@@ -169,13 +169,13 @@ impl Repo {
 
     /// Tracked files differing from `base` in the worktree. The index is
     /// not consulted: what the agent wrote is what is on disk.
-    pub fn changed_files(&self, base: &str) -> Vec<String> {
+    pub(crate) fn changed_files(&self, base: &str) -> Vec<String> {
         self.git(&["diff", "--name-only", base])
             .map(|s| s.lines().map(str::to_string).collect())
             .unwrap_or_default()
     }
 
-    pub fn untracked_files(&self) -> Vec<String> {
+    pub(crate) fn untracked_files(&self) -> Vec<String> {
         self.git(&["ls-files", "--others", "--exclude-standard"])
             .map(|s| s.lines().map(str::to_string).collect())
             .unwrap_or_default()
@@ -183,7 +183,7 @@ impl Repo {
 
     /// File content at a revision; `None` when the path did not exist
     /// there, which is the normal case for a file the session created.
-    pub fn show(&self, rev: &str, path: &str) -> Option<String> {
+    pub(crate) fn show(&self, rev: &str, path: &str) -> Option<String> {
         self.git(&["show", &format!("{rev}:{path}")])
     }
 }
@@ -211,7 +211,7 @@ fn is_binary(content: &[u8]) -> bool {
 /// Hash of the embedded rule corpus plus the package version: every cache
 /// entry is keyed by it, so a rebuild that changes a rule invalidates
 /// everything rather than serving fingerprints from the old ruleset.
-pub fn ruleset_version() -> String {
+pub(crate) fn ruleset_version() -> String {
     let mut hasher = blake3::Hasher::new();
     hasher.update(env!("CARGO_PKG_VERSION").as_bytes());
     for text in [
@@ -241,7 +241,7 @@ fn cache_root() -> Option<PathBuf> {
 /// entry is valid forever — blobs are immutable and a ruleset change
 /// changes the key. `root` also holds pinned session state; tests inject
 /// it instead of mutating `$XDG_CACHE_HOME`.
-pub struct Cache {
+pub(crate) struct Cache {
     root: Option<PathBuf>,
     dir: Option<PathBuf>,
     version: String,
@@ -250,11 +250,11 @@ pub struct Cache {
 impl Cache {
     /// The cache under `$XDG_CACHE_HOME/agent-slop` (or `~/.cache`).
     /// `enabled = false` keeps session state but stores no fingerprints.
-    pub fn open(enabled: bool) -> Cache {
+    pub(crate) fn open(enabled: bool) -> Cache {
         Cache::at(cache_root(), enabled)
     }
 
-    pub fn at(root: Option<PathBuf>, enabled: bool) -> Cache {
+    pub(crate) fn at(root: Option<PathBuf>, enabled: bool) -> Cache {
         let dir = if enabled {
             root.as_ref().map(|r| r.join("v1"))
         } else {
@@ -271,12 +271,12 @@ impl Cache {
     }
 
     #[cfg(test)]
-    pub fn disabled() -> Cache {
+    pub(crate) fn disabled() -> Cache {
         Cache::at(None, false)
     }
 
     fn key(&self, path: &str, content: &str) -> String {
-        let ext = path.rsplit_once('.').map(|(_, e)| e).unwrap_or("");
+        let ext = path.rsplit_once('.').map_or("", |(_, e)| e);
         let mut hasher = blake3::Hasher::new();
         hasher.update(self.version.as_bytes());
         hasher.update(&[0x00]);
@@ -319,7 +319,7 @@ fn cached_fingerprints(
     fps
 }
 
-pub struct Scan {
+pub(crate) struct Scan {
     pub findings: Vec<Finding>,
     pub skipped: Vec<SkippedPath>,
 }
@@ -330,7 +330,7 @@ fn expired(deadline: Option<Instant>) -> bool {
 
 /// Scan worktree copies of `paths`. A file that cannot contribute is
 /// recorded in `skipped` rather than dropped silently.
-pub fn scan_worktree(
+pub(crate) fn scan_worktree(
     cfg: &ResolvedConfig,
     repo: &Repo,
     paths: &[String],
@@ -392,7 +392,7 @@ pub fn scan_worktree(
 /// The baseline multiset: each path as it was at `rev`. A path absent
 /// there contributes nothing, which is what makes a file the session
 /// created fully attributable to it.
-pub fn baseline_at(
+pub(crate) fn baseline_at(
     cfg: &ResolvedConfig,
     repo: &Repo,
     rev: &str,
@@ -418,15 +418,15 @@ pub fn baseline_at(
 /// What the baseline was built from. `LiveHead` is the degraded path: no
 /// session state, so untracked findings cannot be attributed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BaselineSource {
+pub(crate) enum BaselineSource {
     Session,
     LiveHead,
 }
 
-/// The pinned session state. Written by the SessionStart leg, read at
+/// The pinned session state. Written by the `SessionStart` leg, read at
 /// Stop; the hook dispatch that calls these lives in its own module.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionBaseline {
+pub(crate) struct SessionBaseline {
     pub schema: u32,
     pub commit: String,
     pub untracked: Multiset,
@@ -436,8 +436,7 @@ pub struct SessionBaseline {
 fn now_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+        .map_or(0, |d| d.as_secs())
 }
 
 fn session_dir(cache: &Cache) -> Option<PathBuf> {
@@ -463,7 +462,7 @@ fn session_file(cache: &Cache, session_id: &str) -> Option<PathBuf> {
 /// Pin HEAD and the untracked debt present right now. Returns what it
 /// wrote so a caller can report it; a write failure is not an error,
 /// because losing the file is always safe (Stop falls back).
-pub fn pin_session(
+pub(crate) fn pin_session(
     cfg: &ResolvedConfig,
     repo: &Repo,
     cache: &Cache,
@@ -479,14 +478,17 @@ pub fn pin_session(
         untracked: Multiset::from_findings(&scan.findings),
         written_at: now_secs(),
     };
-    if let (Some(path), Ok(json)) = (session_file(cache, session_id), serde_json::to_string(&pinned)) {
+    if let (Some(path), Ok(json)) = (
+        session_file(cache, session_id),
+        serde_json::to_string(&pinned),
+    ) {
         let _ = std::fs::write(path, json);
     }
     Some(pinned)
 }
 
 /// Read back the pinned state, sweeping expired files first.
-pub fn read_session(cache: &Cache, session_id: &str) -> Option<SessionBaseline> {
+pub(crate) fn read_session(cache: &Cache, session_id: &str) -> Option<SessionBaseline> {
     sweep_sessions(cache);
     let path = session_file(cache, session_id)?;
     let pinned: SessionBaseline =
@@ -497,8 +499,10 @@ pub fn read_session(cache: &Cache, session_id: &str) -> Option<SessionBaseline> 
     Some(pinned)
 }
 
-pub fn sweep_sessions(cache: &Cache) {
-    let Some(dir) = session_dir(cache) else { return };
+pub(crate) fn sweep_sessions(cache: &Cache) {
+    let Some(dir) = session_dir(cache) else {
+        return;
+    };
     let Ok(entries) = std::fs::read_dir(&dir) else {
         return;
     };
@@ -509,15 +513,14 @@ pub fn sweep_sessions(cache: &Cache) {
             .modified()
             .ok()
             .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
+            .map_or(0, |d| d.as_secs());
         if modified < cutoff {
             let _ = std::fs::remove_file(entry.path());
         }
     }
 }
 
-pub struct GateOutcome {
+pub(crate) struct GateOutcome {
     /// Everything found in the changed set, suppressed entries included.
     pub findings: Vec<Finding>,
     pub added: Vec<Finding>,
@@ -538,7 +541,7 @@ pub struct GateOutcome {
 
 /// The whole ratchet in one call. `None` means the ratchet is impossible
 /// here — no git, no repository — and the caller exits 0.
-pub fn evaluate(
+pub(crate) fn evaluate(
     cfg: &ResolvedConfig,
     repo: &Repo,
     session_id: Option<&str>,
@@ -625,8 +628,7 @@ mod tests {
             );
             let nanos = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .map(|d| d.subsec_nanos())
-                .unwrap_or(0);
+                .map_or(0, |d| d.subsec_nanos());
             let dir = std::env::temp_dir().join(format!(
                 "agent-slop-ratchet-{name}-{}-{nanos}",
                 std::process::id()
@@ -915,7 +917,13 @@ mod tests {
 
     #[test]
     fn a_session_id_that_is_not_a_plain_identifier_is_refused() {
-        assert!(session_file(&Cache::at(Some(std::env::temp_dir()), false), "../../etc/passwd").is_none());
+        assert!(
+            session_file(
+                &Cache::at(Some(std::env::temp_dir()), false),
+                "../../etc/passwd"
+            )
+            .is_none()
+        );
         assert!(session_file(&Cache::at(Some(std::env::temp_dir()), false), "").is_none());
     }
 

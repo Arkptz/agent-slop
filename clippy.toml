@@ -1,2 +1,3 @@
 # MSRV is read from Cargo.toml `rust-version`; do not duplicate it here.
 # Add clippy tuning knobs below as needed (e.g. cognitive-complexity-threshold).
+allow-unwrap-in-tests = true

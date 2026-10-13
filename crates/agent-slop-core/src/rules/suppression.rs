@@ -18,6 +18,7 @@ pub const VACUOUS_RULE: &str = "slop/suppression-vacuous";
 /// TASK)-\d+`, issue ref `[\w./-]+#\d+`, a path containing a slash, or
 /// `date:YYYY-MM-DD`. No regex crate — one dependency less, and the grammar
 /// is small enough that a scanner over whitespace tokens stays readable.
+#[derive(Debug)]
 pub struct Referent;
 
 impl Referent {
@@ -41,38 +42,37 @@ fn is_referent_token(tok: &str) -> bool {
     // date:YYYY-MM-DD
     if let Some(rest) = t.strip_prefix("date:") {
         let mut parts = rest.splitn(3, '-');
-        if let (Some(y), Some(m), Some(d)) = (parts.next(), parts.next(), parts.next()) {
-            if y.len() == 4
-                && m.len() == 2
-                && d.len() == 2
-                && y.bytes()
-                    .chain(m.bytes())
-                    .chain(d.bytes())
-                    .all(|b| b.is_ascii_digit())
-            {
-                return true;
-            }
+        if let (Some(y), Some(m), Some(d)) = (parts.next(), parts.next(), parts.next())
+            && y.len() == 4
+            && m.len() == 2
+            && d.len() == 2
+            && y.bytes()
+                .chain(m.bytes())
+                .chain(d.bytes())
+                .all(|b| b.is_ascii_digit())
+        {
+            return true;
         }
     }
     // Decision-doc id.
     for p in ["ADR-", "POL-", "SPEC-", "INC-", "TASK-"] {
-        if let Some(rest) = t.to_uppercase().strip_prefix(p) {
-            if !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()) {
-                return true;
-            }
-        }
-    }
-    // Issue ref: owner/repo#123 or #123.
-    if let Some((left, right)) = t.rsplit_once('#') {
-        if !right.is_empty()
-            && right.bytes().all(|b| b.is_ascii_digit())
-            && !left.is_empty()
-            && left
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'/' | b'-' | b'_'))
+        if let Some(rest) = t.to_uppercase().strip_prefix(p)
+            && !rest.is_empty()
+            && rest.bytes().all(|b| b.is_ascii_digit())
         {
             return true;
         }
+    }
+    // Issue ref: owner/repo#123 or #123.
+    if let Some((left, right)) = t.rsplit_once('#')
+        && !right.is_empty()
+        && right.bytes().all(|b| b.is_ascii_digit())
+        && !left.is_empty()
+        && left
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'/' | b'-' | b'_'))
+    {
+        return true;
     }
     // A path containing a slash: docs/adr-064.md, src/rules/.
     if t.contains('/')
@@ -114,6 +114,7 @@ pub struct AllowLine {
 
 /// True when the comment is NOTHING but an allow directive — such a line
 /// suppresses the next non-empty line and is not itself content.
+#[must_use]
 pub fn is_standalone_allow(text: &str) -> bool {
     let t = text.trim_start();
     let t = t
@@ -131,6 +132,7 @@ pub fn is_standalone_allow(text: &str) -> bool {
 /// Parse one `agent-slop: allow <rule-id> -- <reason>` line. Returns `None`
 /// for text that is not an allow line. Handles both the standalone form and
 /// the trailing same-line form `(agent-slop: allow ... -- ...)`.
+#[must_use]
 pub fn parse_allow(text: &str) -> Option<AllowLine> {
     let t = text.trim_start();
     let t = t
