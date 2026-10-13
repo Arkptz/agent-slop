@@ -1,0 +1,12 @@
+[book]
+title = "Project Guide"
+authors = ["Project Owner"]
+language = "en"
+src = "guide"
+
+[output.html]
+git-repository-url = ""
+edit-url-template = ""
+
+[output.html.search]
+enable = true

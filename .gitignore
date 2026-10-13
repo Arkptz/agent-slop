@@ -1,0 +1,51 @@
+# ── Rust ──────────────────────────────────────────────────────────────────
+/target/
+**/*.rs.bk
+*.pdb
+# Cargo.lock: COMMIT for binaries/apps, ignore for libraries. Default: commit.
+# /Cargo.lock
+
+# ── Nix / direnv ──────────────────────────────────────────────────────────
+result
+result-*
+.direnv/
+.pre-commit-config.yaml
+
+# ── AI agents ─────────────────────────────────────────────────────────────
+.sisyphus/
+.opencode/node_modules/
+.claude/settings.local.json
+.mcp.json.local
+
+# ── graphify (codebase knowledge graph) ───────────────────────────────────
+# Knowledge graph is a regenerable local build artifact — never tracked in git.
+# Rebuild with `graphify update <path>` (AST, free) or `graphify-semantic <path>`
+# (paid LLM). See .graphifyignore for scan-exclusion of secrets/vendor.
+graphify-out/
+
+# ── dg (DecisionGraph) ────────────────────────────────────────────────────
+.dg/.cache.json
+.dg/site/
+.dg/templates/
+
+# ── mitmproxy / traffic capture (agent browser-mitm) ──────────────────────
+mitm_mcp_traffic.db
+*.flow
+
+# ── IDE / editors ─────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*~
+
+# ── OS ────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Secrets ───────────────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Docs build output ──────────────────────────────────────────────────────
+mdbook/book/

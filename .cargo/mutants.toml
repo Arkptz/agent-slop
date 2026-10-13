@@ -1,0 +1,4 @@
+test_tool = "nextest"
+timeout_multiplier = 3.0
+minimum_test_timeout = 60
+exclude_globs = ["crates/app/src/main.rs"]

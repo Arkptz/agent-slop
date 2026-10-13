@@ -1,0 +1,31 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+# Shared package metadata — member crates inherit with `field.workspace = true`.
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "MIT OR Apache-2.0"
+repository = ""
+
+# Single place for cross-crate dependency versions. Members reference these with
+# `dep.workspace = true` so the whole workspace stays on one version.
+[workspace.dependencies]
+app-core = { path = "crates/core" }
+
+# Workspace-wide lints — inherited by each crate via `[lints] workspace = true`.
+[workspace.lints.rust]
+unsafe_code = "warn"
+unreachable_pub = "warn"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "warn"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

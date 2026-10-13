@@ -1,0 +1,34 @@
+pre-commit:
+  parallel: true
+  commands:
+    fmt-check:
+      glob: "*.rs"
+      run: cargo fmt --all --check
+    clippy-check:
+      glob: "*.rs"
+      run: cargo clippy --all-targets -- -D warnings
+    rdme-check:
+      glob: "{src/lib.rs,crates/*/src/lib.rs,README.md}"
+      run: cargo rdme --check
+
+commit-msg:
+  commands:
+    conventional-commits:
+      run: sh .githooks/commit-msg {1}
+    dg-validate:
+      run: dg hooks commit-msg {1}
+
+prepare-commit-msg:
+  commands:
+    strip-ai-trailers:
+      run: |
+        if [ -f "{1}" ]; then
+          sed -i '/^Co-[Aa]uthored-[Bb]y:/d' "{1}"
+          sed -i '/^Signed-off-by:.*\([Cc]laude\|[Cc]ursor\|[Cc]opilot\|[Gg][Pp][Tt]\|[Cc]odex\)/d' "{1}"
+          sed -i '/^Assisted-by:/d' "{1}"
+          sed -i '/^Generated-by:/d' "{1}"
+          sed -i '/^Ultraworked:/d' "{1}"
+          sed -i '/^X-AI-Generated:/d' "{1}"
+        fi
+    dg-prepare:
+      run: dg hooks prepare-commit-msg {1}

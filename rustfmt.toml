@@ -1,0 +1,6 @@
+edition = "2024"
+
+# The two options below need a nightly rustfmt (`cargo +nightly fmt`). They are
+# left commented so `cargo fmt` on the pinned stable toolchain stays warning-free.
+# imports_granularity = "Crate"
+# group_imports = "StdExternalCrate"

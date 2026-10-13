@@ -1,0 +1,48 @@
+{
+  // Renovate config for the Rust template: pins GitHub Action digests, keeps
+  // Cargo deps current, and tracks the stable Rust toolchain channel.
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+  extends: [
+    "config:recommended",
+    "helpers:pinGitHubActionDigests",
+    ":semanticCommits",
+  ],
+  pinDigests: true,
+  timezone: "Etc/UTC",
+  schedule: ["before 6am on monday"],
+  lockFileMaintenance: {
+    enabled: true,
+  },
+  packageRules: [
+    {
+      // One PR for all SHA-pinned GitHub Actions digest bumps.
+      matchManagers: ["github-actions"],
+      groupName: "github-actions",
+    },
+    {
+      // Low-risk bumps (patch / pin / digest / lockfile) ride together.
+      matchUpdateTypes: ["patch", "pin", "digest", "lockFileMaintenance"],
+      groupName: "lockfile and patch updates",
+    },
+    {
+      // Group Cargo minor + patch; majors stay separate for review.
+      matchManagers: ["cargo"],
+      matchUpdateTypes: ["minor", "patch"],
+      groupName: "cargo minor and patch",
+    },
+  ],
+  // Track rust-toolchain.toml `channel` against the latest stable Rust release.
+  // Cargo.toml `rust-version` (MSRV) is handled by the built-in cargo manager;
+  // bump it alongside the channel when raising the floor.
+  customManagers: [
+    {
+      customType: "regex",
+      managerFilePatterns: ["/^rust-toolchain\\.toml$/"],
+      matchStrings: ['channel\\s*=\\s*"(?<currentValue>\\d+\\.\\d+\\.\\d+)"'],
+      depNameTemplate: "rust-lang/rust",
+      // github-tags is reliable for rust-lang/rust; GitHub *releases* are
+      // published inconsistently, so a github-releases datasource often misses.
+      datasourceTemplate: "github-tags",
+    },
+  ],
+}

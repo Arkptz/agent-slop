@@ -1,0 +1,1 @@
+{"_commit": "v0.2.3", "_src_path": "/home/arkptz/git/mine/templates/tmpl-rust-priv", "variant": "workspace", "project_name": "agent-slop", "project_owner": "Arkptz", "project_repo": "agent-slop", "description": "Deterministic linter for AI-agent comment slop with hook ratchets", "crate_name": "agent_slop", "author_name": "arkptz", "author_email": "arkptz@gmail.com"}

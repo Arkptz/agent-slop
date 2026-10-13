@@ -1,0 +1,136 @@
+# Build and push a Docker image to GHCR (GitHub Container Registry).
+# Contract: SPEC-004 (universal docker-build workflow). Action SHAs are pinned.
+name: Build and push Docker image to GHCR
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+# Least-privilege: packages:write to push to GHCR; NO id-token:write (F12 fix).
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: docker-${{ github.workflow }}-${{ github.ref_name }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  build_push:
+    name: Build and push ${{ matrix.image_suffix || 'image' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # EDIT ME to add binaries — one matrix entry per workspace binary.
+        # templates/rust-workspace/Dockerfile takes `--build-arg BIN=<crate-bin>` and
+        # always installs the result as `app`, so each binary needs its own entry here.
+        # Copy the block below, setting build_arg_value to the crate's [[bin]] name and
+        # image_suffix to a matching dash suffix (Q1 convention), e.g.:
+        #   - image_suffix: -worker
+        #     build_arg_name: BIN
+        #     build_arg_value: worker
+        include:
+          - image_suffix: -app
+            build_arg_name: BIN
+            build_arg_value: app
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Lowercase image repo: GitHub owner/repo may contain uppercase, GHCR requires lowercase.
+      # R2-F8 fix: shell step emits to GITHUB_OUTPUT, referenced as steps.repo.outputs.image_repo.
+      - name: Compute lowercase image repo
+        id: repo
+        run: |
+          image_repo=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          echo "image_repo=${image_repo}" >> "$GITHUB_OUTPUT"
+
+      # GitOps always-unique tag: branch-sha7-iso8601z format.
+      # R2-F2/F3 fix: computed in a shell step, emitted to GITHUB_OUTPUT, never inlined in metadata-action.
+      # enable gate: fires on push+tag+workflow_dispatch; skips PR (event_name != pull_request).
+      - name: Compute GitOps tag
+        id: gitops
+        run: |
+          BRANCH=$(printf '%s' "$GITHUB_REF_NAME" | tr -c '[:alnum:]._-' '-' | cut -c1-64)
+          SHORT_SHA="${GITHUB_SHA:0:7}"
+          TIMESTAMP=$(date -u +%Y%m%dT%H%M%SZ)
+          echo "gitops_tag=${BRANCH}-${SHORT_SHA}-${TIMESTAMP}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ghcr.io/${{ steps.repo.outputs.image_repo }}${{ matrix.image_suffix }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=${{ steps.gitops.outputs.gitops_tag }},enable=${{ github.event_name != 'pull_request' }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Build arg: only passed when build_arg_name is non-empty (workspace templates).
+          # Single-binary templates leave build_arg_name empty and this line is skipped.
+          build-args: |
+            ${{ matrix.build_arg_name != '' && format('{0}={1}', matrix.build_arg_name, matrix.build_arg_value) || '' }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # Alternative registry cache (uncomment to use, update image path to match):
+          # cache-from: type=registry,ref=ghcr.io/${{ steps.repo.outputs.image_repo }}/cache${{ matrix.image_suffix }}
+          # cache-to: type=registry,ref=ghcr.io/${{ steps.repo.outputs.image_repo }}/cache${{ matrix.image_suffix }},mode=max
+          platforms: linux/amd64
+          # Opt-in multi-arch (uncomment to enable):
+          # platforms: linux/amd64,linux/arm64
+          provenance: ${{ github.event_name != 'pull_request' && 'mode=max' || 'false' }}
+          sbom: false
+
+  # On a v* tag, publish a GitHub Release. Gated behind build_push so the release
+  # only appears once the semver-tagged images are actually in GHCR.
+  release:
+    name: GitHub Release
+    needs: build_push
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          IMAGE_REPO=$(printf '%s' "$REPO" | tr '[:upper:]' '[:lower:]')
+          gh release create "$TAG" \
+            --repo "$REPO" \
+            --title "$TAG" \
+            --generate-notes \
+            --notes "Images published to \`ghcr.io/${IMAGE_REPO}\` at tag \`${TAG#v}\` (one per matrix suffix — see the workflow's image tags)."
