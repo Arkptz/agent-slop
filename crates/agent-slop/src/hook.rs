@@ -20,11 +20,11 @@ use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 
-use crate::config::{self, ResolvedConfig};
-use crate::finding::{Finding, Severity};
+use agent_slop_core::config::{self, ResolvedConfig};
+use agent_slop_core::finding::{Finding, Severity};
 use crate::ratchet::{self, Cache, Repo};
-use crate::rules::{corpus::Corpus, scan_source};
-use crate::telemetry::{self, RowInput};
+use agent_slop_core::rules::{corpus::Corpus, scan_source};
+use agent_slop_integrations::telemetry::{self, RowInput};
 
 /// At most three advice lines reach the model per tool call; more is a
 /// wall of text an agent skims past.
@@ -276,7 +276,7 @@ fn post_tool_use(cfg: &ResolvedConfig, payload: &HookPayload, cwd: &std::path::P
     // One second verdict per comment the rules matched, computed before the
     // text is assembled so the annotation lands under its own finding. The
     // envelope format is unchanged: the model adds lines, not structure.
-    let judged = crate::judge::annotate(cfg, &findings, cwd, deadline(cfg).unwrap_or_else(Instant::now), None);
+    let judged = agent_slop_integrations::judge::annotate(cfg, &findings, cwd, deadline(cfg).unwrap_or_else(Instant::now), None);
     for (i, f) in findings.iter().take(ADVICE_LINES).enumerate() {
         lines.push(format!("{}:{} {} — {}", f.file, f.line, f.rule, f.message));
         if let Some(Some(v)) = judged.get(i) {
@@ -332,8 +332,8 @@ fn needs_advice(cfg: &ResolvedConfig, cwd: &std::path::Path, rel: &str) -> Vec<S
     let Some(base) = repo.resolve_ref(&cfg.ref_) else {
         return Vec::new();
     };
-    let chunks = crate::judge::added_code_chunks(&repo.root, &base, Some(rel), cfg.judge.max_verdicts);
-    crate::judge::needs(cfg, &chunks, &repo_name(&repo.root), deadline(cfg).unwrap_or_else(Instant::now))
+    let chunks = agent_slop_integrations::judge::added_code_chunks(&repo.root, &base, Some(rel), cfg.judge.max_verdicts);
+    agent_slop_integrations::judge::needs(cfg, &chunks, &repo_name(&repo.root), deadline(cfg).unwrap_or_else(Instant::now))
         .iter()
         .map(|hit| hit.render())
         .collect()
@@ -350,7 +350,7 @@ fn repo_name(root: &std::path::Path) -> String {
 fn session_start(cfg: &ResolvedConfig, payload: &HookPayload, cwd: &std::path::Path) -> Outcome {    let (Some(session_id), Some(repo)) = (payload.session_id(), Repo::discover(cwd)) else {
         return Outcome::allow();
     };
-    ratchet::pin_session(cfg, &repo, session_id, deadline(cfg));
+    ratchet::pin_session(cfg, &repo, &Cache::open(true), session_id, deadline(cfg));
     Outcome::allow()
 }
 
@@ -433,7 +433,7 @@ fn stop(cfg: &ResolvedConfig, payload: &HookPayload, cwd: &std::path::Path) -> O
     // model only adds a line of context to a message that is going out
     // either way. The budget is the leg's own, so a slow endpoint costs the
     // annotation, never the gate.
-    let judged = crate::judge::annotate(
+    let judged = agent_slop_integrations::judge::annotate(
         cfg,
         &gate.blocking,
         cwd,
@@ -455,7 +455,7 @@ fn stop(cfg: &ResolvedConfig, payload: &HookPayload, cwd: &std::path::Path) -> O
 fn render_block(
     blocking: &[Finding],
     added: &[Finding],
-    judged: &[Option<crate::judge::Verdict>],
+    judged: &[Option<agent_slop_integrations::judge::Verdict>],
 ) -> Vec<String> {
     let corpus = Corpus::load();
     let mut lines =
@@ -710,7 +710,7 @@ mod tests {
             message: "change-history residue".into(),
             snippet: "# previously".into(),
             fingerprint: "aa".into(),
-            source: crate::finding::Source::Slop,
+            source: agent_slop_core::finding::Source::Slop,
             lang: None,
             suppression: None,
             fixable: true,
@@ -741,7 +741,7 @@ mod tests {
             message: "session residue".into(),
             snippet: "# for now".into(),
             fingerprint: format!("f{line}"),
-            source: crate::finding::Source::Slop,
+            source: agent_slop_core::finding::Source::Slop,
             lang: None,
             suppression: None,
             fixable: true,

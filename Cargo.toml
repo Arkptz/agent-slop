@@ -4,15 +4,30 @@ members = ["crates/*"]
 
 # Shared package metadata — member crates inherit with `field.workspace = true`.
 [workspace.package]
-version = "0.1.0"
-edition = "2024"
+version = "1.0.0"
+edition = "2021"
 rust-version = "1.95"
 license = "MIT OR Apache-2.0"
-repository = ""
+repository = "https://github.com/Arkptz/agent-slop"
+authors = ["arkptz <arkptz@gmail.com>"]
+description = "Deterministic linter for AI-agent comment slop with hook ratchets"
+keywords = ["lint", "comments", "ai", "agents", "ast-grep"]
+categories = ["development-tools", "command-line-utilities"]
 
 # Single place for cross-crate dependency versions. Members reference these with
 # `dep.workspace = true` so the whole workspace stays on one version.
 [workspace.dependencies]
+agent-slop-core = { path = "crates/agent-slop-core", version = "=1.0.0" }
+agent-slop-integrations = { path = "crates/agent-slop-integrations", version = "=1.0.0" }
+# The ast-grep API changes between minor releases; bumps are deliberate.
+ast-grep-core = "=0.45.3"
+ast-grep-language = "=0.45.3"
+blake3 = "1"
+home = "0.5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+unicode-normalization = "0.1"
 
 # Workspace-wide lints — inherited by each crate via `[lints] workspace = true`.
 [workspace.lints.rust]

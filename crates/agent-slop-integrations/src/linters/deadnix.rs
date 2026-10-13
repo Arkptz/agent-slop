@@ -10,7 +10,7 @@
 use serde::Deserialize;
 
 use super::{Adapter, Cost, PathArity, RawFinding};
-use crate::finding::Severity;
+use agent_slop_core::finding::Severity;
 
 pub static ADAPTER: Adapter = Adapter {
     tool: "deadnix",

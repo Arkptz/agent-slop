@@ -6,6 +6,19 @@ version = 4
 name = "agent-slop"
 version = "1.0.0"
 dependencies = [
+ "agent-slop-core",
+ "agent-slop-integrations",
+ "blake3",
+ "home",
+ "serde",
+ "serde_json",
+ "toml",
+]
+
+[[package]]
+name = "agent-slop-core"
+version = "1.0.0"
+dependencies = [
  "ast-grep-core",
  "ast-grep-language",
  "blake3",
@@ -14,6 +27,16 @@ dependencies = [
  "serde_json",
  "toml",
  "unicode-normalization",
+]
+
+[[package]]
+name = "agent-slop-integrations"
+version = "1.0.0"
+dependencies = [
+ "agent-slop-core",
+ "home",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -56,9 +56,8 @@ use std::net::{TcpStream, ToSocketAddrs};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use crate::config::ResolvedConfig;
-use crate::finding::Finding;
-use crate::ratchet;
+use agent_slop_core::config::ResolvedConfig;
+use agent_slop_core::finding::Finding;
 
 /// The verdict question. The three keys and their descriptions are the
 /// wave-5 training contract (`~/Datasets/comment-quality/build_wave5.py`);
@@ -521,41 +520,30 @@ pub fn needs(
 /// between `base` and the working tree, put to the model. The hook asks about
 /// the file it just watched; this asks about a whole diff, which is the case
 /// where a branch is mostly non-comment code and the comment axis has nothing
-/// to say.
-///
-/// `since` is the caller's `--since`; `cfg.ref_` is the fallback so a bare
-/// `scan` still has a base, and `None` from a non-work-tree directory
-/// produces nothing rather than an error.
+/// to say. The caller resolves the repository root and base commit.
 pub fn audit_needs(
     cfg: &ResolvedConfig,
-    cwd: &Path,
-    since: Option<&str>,
+    root: &Path,
+    base: &str,
     cap: Option<usize>,
     deadline: Instant,
 ) -> Vec<NeedsHit> {
     if !cfg.judge.enabled {
         return Vec::new();
     }
-    let Some(repo) = ratchet::Repo::discover(cwd) else {
-        return Vec::new();
-    };
-    let spec = since.unwrap_or(&cfg.ref_);
-    let Some(base) = repo.resolve_ref(spec) else {
-        return Vec::new();
-    };
     let cap = match cap {
         None => cfg.judge.max_verdicts,
         Some(0) => usize::MAX,
         Some(n) => n,
     };
-    let chunks = added_code_chunks(&repo.root, &base, None, cap);
-    needs(cfg, &chunks, &repo_name(&repo.root), deadline)
+    let chunks = added_code_chunks(root, base, None, cap);
+    needs(cfg, &chunks, &repo_name(root), deadline)
 }
 
 /// The repository's own name, which the states carry the way the mined
 /// training states carried theirs. A checkout under a worktree or a
 /// subdirectory falls back to the basename of the root.
-fn repo_name(root: &Path) -> String {
+pub fn repo_name(root: &Path) -> String {
     root.file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| String::from("repo"))
@@ -849,7 +837,7 @@ mod tests {
     }
 
     fn judge_cfg(url: &str, timeout_ms: u64) -> ResolvedConfig {
-        let mut cfg = crate::config::builtin_config();
+        let mut cfg = agent_slop_core::config::builtin_config();
         cfg.judge.enabled = true;
         cfg.judge.url = url.to_string();
         cfg.judge.timeout_ms = timeout_ms;
@@ -859,7 +847,7 @@ mod tests {
     fn finding(rule: &str) -> Finding {
         Finding {
             rule: rule.to_string(),
-            severity: crate::finding::Severity::Warning,
+            severity: agent_slop_core::finding::Severity::Warning,
             upstream_severity: None,
             file: String::from("modules/x.nix"),
             line: 12,
@@ -868,7 +856,7 @@ mod tests {
             message: String::from("narrates the past"),
             snippet: String::from("// Renamed from enableFoo in 2.0"),
             fingerprint: String::from("deadbeefdeadbeef"),
-            source: crate::finding::Source::Slop,
+            source: agent_slop_core::finding::Source::Slop,
             lang: Some(String::from("nix")),
             suppression: None,
             fixable: false,
@@ -888,7 +876,7 @@ mod tests {
             cwd: Path::new("."),
             findings: &[finding("slop/comment-history")],
             added: &[finding("slop/comment-history")],
-            mode: crate::config::Mode::Observe,
+            mode: agent_slop_core::config::Mode::Observe,
             ref_: "none",
             blocked: false,
             would_block: false,

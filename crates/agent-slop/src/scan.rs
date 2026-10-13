@@ -11,12 +11,12 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use crate::cli::{Format, ScanArgs};
-use crate::config::{excluded, scoped_out, ResolvedConfig};
-use crate::finding::{Finding, Severity};
-use crate::judge;
-use crate::linters::{self, PathIndex, Selection, Skipped, Stage};
+use agent_slop_core::config::{excluded, scoped_out, ResolvedConfig};
+use agent_slop_core::finding::{Finding, Severity};
+use agent_slop_integrations::judge;
+use agent_slop_integrations::linters::{self, PathIndex, Selection, Skipped, Stage};
 use crate::ratchet::{self, Cache, Repo, SkippedPath};
-use crate::rules::scan_source;
+use agent_slop_core::rules::scan_source;
 
 pub struct Report {
     pub findings: Vec<Finding>,
@@ -106,7 +106,7 @@ fn expand(arg: &Path, out: &mut Vec<PathBuf>) {
         }
         if kind.is_dir() {
             expand(&path, out);
-        } else if crate::lang::spec_for_path(&path.to_string_lossy()).is_some() {
+        } else if agent_slop_core::lang::spec_for_path(&path.to_string_lossy()).is_some() {
             out.push(path);
         }
     }
@@ -350,7 +350,7 @@ pub fn envelope(report: &Report) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::builtin_config;
+    use agent_slop_core::config::builtin_config;
 
     const SLOP: &str = "# We previously always sent a Referer — that was a bug.\nreferer = None\n";
 
@@ -468,7 +468,7 @@ mod tests {
         std::fs::create_dir_all(s.0.join("tests")).expect("dir");
         std::fs::write(s.0.join("tests/a.py"), SLOP).expect("write");
         let mut cfg = builtin_config();
-        cfg.exclude.scoped = vec![crate::config::ScopedExclude {
+        cfg.exclude.scoped = vec![agent_slop_core::config::ScopedExclude {
             paths: vec!["tests/**".to_string()],
             rules: vec!["slop/comment-history".to_string()],
         }];

@@ -20,8 +20,8 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::process::Command;
 
-use crate::config::{ResolvedConfig, ResolvedLinter, RuleLevel};
-use crate::finding::{fingerprint, Finding, Severity, Source};
+use agent_slop_core::config::{ResolvedConfig, ResolvedLinter, RuleLevel};
+use agent_slop_core::finding::{fingerprint, Finding, Severity, Source};
 
 /// What a parse yields, before config decides our severity. `code` is the
 /// linter's own id; deadnix emits none, so the adapter supplies its fixed
@@ -382,7 +382,7 @@ pub fn status_map(ok: &[&str], skipped: &[Skipped]) -> BTreeMap<String, String> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::builtin_config;
+    use agent_slop_core::config::builtin_config;
 
     fn raw(code: &str, class: Severity) -> RawFinding {
         RawFinding {

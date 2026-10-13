@@ -294,13 +294,13 @@ fn carve_out_filter() -> String {
     line[start + 1..end].to_string()
 }
 
-/// In the repository the script is two levels up; in the Nix build it is
-/// wherever the derivation put it. Absence is a failure, never a skip.
+/// The recorder belongs to the agent-feedback consumer, not to this
+/// repository, so the compatibility check runs only when its path is
+/// supplied. Once requested, absence is a failure, never a skip.
 fn feedback_record_path() -> PathBuf {
-    if let Some(p) = std::env::var_os("AGENT_SLOP_FEEDBACK_RECORD") {
-        return PathBuf::from(p);
-    }
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../files/claude-hooks/feedback-record.sh")
+    std::env::var_os("AGENT_SLOP_FEEDBACK_RECORD")
+        .map(PathBuf::from)
+        .expect("set AGENT_SLOP_FEEDBACK_RECORD to the consumer's feedback-record.sh")
 }
 
 fn jq(program: &str, harness: &str, session: &str, file: &Path) -> Vec<serde_json::Value> {
@@ -327,6 +327,7 @@ fn jq(program: &str, harness: &str, session: &str, file: &Path) -> Vec<serde_jso
 /// the `slop_scan` clause removed the row is gone, which is exactly the
 /// state this producer shipped into before the carve-out edit landed.
 #[test]
+#[ignore = "agent-feedback consumer check: needs AGENT_SLOP_FEEDBACK_RECORD; run with --ignored"]
 fn the_session_end_rewrite_keeps_the_row_and_would_drop_it_without_the_carve_out() {
     let s = Scratch::new("carveout");
     let sid = "tel-carve";

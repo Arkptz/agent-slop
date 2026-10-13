@@ -25,9 +25,9 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::{Mode, ResolvedConfig};
-use crate::finding::{Finding, Severity};
-use crate::rules::{corpus, scan_source};
+use agent_slop_core::config::{Mode, ResolvedConfig};
+use agent_slop_core::finding::{Finding, Severity};
+use agent_slop_core::rules::{corpus, scan_source};
 
 /// Session files older than this are swept on read.
 const SESSION_TTL_SECS: u64 = 7 * 24 * 60 * 60;
@@ -239,16 +239,24 @@ fn cache_root() -> Option<PathBuf> {
 /// Content-addressed fingerprint cache. Keyed by ruleset version, file
 /// extension (the language decides the parse) and content hash, so an
 /// entry is valid forever — blobs are immutable and a ruleset change
-/// changes the key.
+/// changes the key. `root` also holds pinned session state; tests inject
+/// it instead of mutating `$XDG_CACHE_HOME`.
 pub struct Cache {
+    root: Option<PathBuf>,
     dir: Option<PathBuf>,
     version: String,
 }
 
 impl Cache {
+    /// The cache under `$XDG_CACHE_HOME/agent-slop` (or `~/.cache`).
+    /// `enabled = false` keeps session state but stores no fingerprints.
     pub fn open(enabled: bool) -> Cache {
+        Cache::at(cache_root(), enabled)
+    }
+
+    pub fn at(root: Option<PathBuf>, enabled: bool) -> Cache {
         let dir = if enabled {
-            cache_root().map(|r| r.join("v1"))
+            root.as_ref().map(|r| r.join("v1"))
         } else {
             None
         };
@@ -256,6 +264,7 @@ impl Cache {
             let _ = std::fs::create_dir_all(d);
         }
         Cache {
+            root,
             dir,
             version: ruleset_version(),
         }
@@ -263,10 +272,7 @@ impl Cache {
 
     #[cfg(test)]
     pub fn disabled() -> Cache {
-        Cache {
-            dir: None,
-            version: ruleset_version(),
-        }
+        Cache::at(None, false)
     }
 
     fn key(&self, path: &str, content: &str) -> String {
@@ -345,7 +351,7 @@ pub fn scan_worktree(
         // only: `scan` skipped a vendored path while the Stop gate blocked
         // the turn over that same path's comments, with no way out short of
         // disabling the rule globally.
-        if crate::config::excluded(cfg, path) {
+        if agent_slop_core::config::excluded(cfg, path) {
             skipped.push(SkippedPath {
                 path: path.clone(),
                 reason: "excluded",
@@ -377,7 +383,7 @@ pub fn scan_worktree(
         findings.extend(
             scan_source(cfg, path, &content)
                 .into_iter()
-                .filter(|f| !crate::config::scoped_out(cfg, &f.file, &f.rule)),
+                .filter(|f| !agent_slop_core::config::scoped_out(cfg, &f.file, &f.rule)),
         );
     }
     Scan { findings, skipped }
@@ -434,8 +440,8 @@ fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
-fn session_dir() -> Option<PathBuf> {
-    let dir = cache_root()?.join("session");
+fn session_dir(cache: &Cache) -> Option<PathBuf> {
+    let dir = cache.root.as_ref()?.join("session");
     std::fs::create_dir_all(&dir).ok()?;
     Some(dir)
 }
@@ -443,7 +449,7 @@ fn session_dir() -> Option<PathBuf> {
 /// A session id reaches the filesystem, so anything that is not a plain
 /// identifier is rejected rather than sanitised — a silently rewritten id
 /// reads back as a missing session, which is the wrong failure.
-fn session_file(session_id: &str) -> Option<PathBuf> {
+fn session_file(cache: &Cache, session_id: &str) -> Option<PathBuf> {
     if session_id.is_empty()
         || !session_id
             .chars()
@@ -451,7 +457,7 @@ fn session_file(session_id: &str) -> Option<PathBuf> {
     {
         return None;
     }
-    Some(session_dir()?.join(format!("{session_id}.json")))
+    Some(session_dir(cache)?.join(format!("{session_id}.json")))
 }
 
 /// Pin HEAD and the untracked debt present right now. Returns what it
@@ -460,6 +466,7 @@ fn session_file(session_id: &str) -> Option<PathBuf> {
 pub fn pin_session(
     cfg: &ResolvedConfig,
     repo: &Repo,
+    cache: &Cache,
     session_id: &str,
     deadline: Option<Instant>,
 ) -> Option<SessionBaseline> {
@@ -472,16 +479,16 @@ pub fn pin_session(
         untracked: Multiset::from_findings(&scan.findings),
         written_at: now_secs(),
     };
-    if let (Some(path), Ok(json)) = (session_file(session_id), serde_json::to_string(&pinned)) {
+    if let (Some(path), Ok(json)) = (session_file(cache, session_id), serde_json::to_string(&pinned)) {
         let _ = std::fs::write(path, json);
     }
     Some(pinned)
 }
 
 /// Read back the pinned state, sweeping expired files first.
-pub fn read_session(session_id: &str) -> Option<SessionBaseline> {
-    sweep_sessions();
-    let path = session_file(session_id)?;
+pub fn read_session(cache: &Cache, session_id: &str) -> Option<SessionBaseline> {
+    sweep_sessions(cache);
+    let path = session_file(cache, session_id)?;
     let pinned: SessionBaseline =
         serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
     if pinned.schema != 1 {
@@ -490,8 +497,8 @@ pub fn read_session(session_id: &str) -> Option<SessionBaseline> {
     Some(pinned)
 }
 
-pub fn sweep_sessions() {
-    let Some(dir) = session_dir() else { return };
+pub fn sweep_sessions(cache: &Cache) {
+    let Some(dir) = session_dir(cache) else { return };
     let Ok(entries) = std::fs::read_dir(&dir) else {
         return;
     };
@@ -517,9 +524,9 @@ pub struct GateOutcome {
     /// The subset of `added` that justifies exit 2: unsuppressed errors,
     /// minus anything the fallback rule makes unattributable.
     pub blocking: Vec<Finding>,
-    // Read by `tests/ratchet.rs`, which pulls this module in via `#[path]`
-    // and is therefore a separate compilation from the binary.
-    #[allow(dead_code)]
+    /// Paths the gate could not scan, asserted by the scenario tests; the
+    /// Stop leg reports only the derived `files_scanned`.
+    #[cfg_attr(not(test), expect(dead_code, reason = "read by scenario tests"))]
     pub skipped: Vec<SkippedPath>,
     pub baseline_source: BaselineSource,
     pub files_scanned: usize,
@@ -539,7 +546,7 @@ pub fn evaluate(
     cache: &Cache,
     deadline: Option<Instant>,
 ) -> Option<GateOutcome> {
-    let session = session_id.and_then(read_session);
+    let session = session_id.and_then(|id| read_session(cache, id));
     let (base_commit, baseline_source) = match (&session, since) {
         // An explicit --since overrides the pinned commit: the human asked
         // for that comparison.
@@ -586,9 +593,12 @@ pub fn evaluate(
 }
 
 #[cfg(test)]
+mod scenario_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::builtin_config;
+    use agent_slop_core::config::builtin_config;
 
     /// Fires `slop/comment-history` at `error` (see `rules::tests`).
     const SLOP: &str = "# We previously always sent a Referer — that was a bug.\nreferer = None\n";
@@ -905,8 +915,8 @@ mod tests {
 
     #[test]
     fn a_session_id_that_is_not_a_plain_identifier_is_refused() {
-        assert!(session_file("../../etc/passwd").is_none());
-        assert!(session_file("").is_none());
+        assert!(session_file(&Cache::at(Some(std::env::temp_dir()), false), "../../etc/passwd").is_none());
+        assert!(session_file(&Cache::at(Some(std::env::temp_dir()), false), "").is_none());
     }
 
     #[test]
@@ -933,7 +943,7 @@ mod tests {
                 message: "m".into(),
                 snippet: "s".into(),
                 fingerprint: (*fp).to_string(),
-                source: crate::finding::Source::Slop,
+                source: agent_slop_core::finding::Source::Slop,
                 lang: None,
                 suppression: None,
                 fixable: true,

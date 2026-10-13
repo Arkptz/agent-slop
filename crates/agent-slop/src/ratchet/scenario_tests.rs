@@ -1,28 +1,13 @@
-//! End-to-end ratchet cover through the shipped library surface: the
-//! SPEC-006 situation-table rows the unit tests inside `src/ratchet.rs`
-//! do not reach — detached HEAD, gitignored paths, binary/symlink/
-//! submodule skips, the content-addressed cache behind a real
-//! `$XDG_CACHE_HOME`, the session pin through the real filesystem (the
-//! unit tests deliberately bypass it), the TTL sweep, and `--since`
-//! merge-base charging. Engine modules are pulled in via `#[path]`
-//! exactly as `tests/rule_fixtures_main.rs` does; no engine code is
-//! copied.
+//! End-to-end ratchet cover through real repositories: detached HEAD,
+//! gitignored paths, binary/symlink/submodule skips, the content-addressed
+//! cache in an injected directory, the session pin through the real
+//! filesystem, the TTL sweep, and `--since` merge-base charging.
 
-#[path = "../src/config.rs"]
-pub mod config;
-#[path = "../src/finding.rs"]
-pub mod finding;
-#[path = "../src/lang.rs"]
-pub mod lang;
-#[path = "../src/ratchet.rs"]
-pub mod ratchet;
-#[path = "../src/rules/mod.rs"]
-pub mod rules;
+use super as ratchet;
+use agent_slop_core::config;
 
-use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use config::{builtin_config, Mode, ResolvedConfig};
@@ -34,26 +19,14 @@ const CLEAN: &str = "referer = None\n";
 /// Same family, different normalised payload: a second fingerprint.
 const SLOP2: &str = "# We previously always sent a User-Agent — that was a bug.\n";
 
-/// `evaluate` reads `$XDG_CACHE_HOME` on every call, so exactly one
-/// scratch repository may exist at a time: the env var is held under a
-/// lock for the Scratch's lifetime and restored on drop. Nothing here
-/// ever touches the user's real cache.
-static CACHE_LOCK: Mutex<()> = Mutex::new(());
-
 struct Scratch {
     root: PathBuf,
     dir: PathBuf,
     cache: PathBuf,
-    prev_xdg: Option<OsString>,
-    _guard: MutexGuard<'static, ()>,
 }
 
 impl Drop for Scratch {
     fn drop(&mut self) {
-        match &self.prev_xdg {
-            Some(v) => std::env::set_var("XDG_CACHE_HOME", v),
-            None => std::env::remove_var("XDG_CACHE_HOME"),
-        }
         let _ = std::fs::remove_dir_all(&self.root);
     }
 }
@@ -68,7 +41,6 @@ impl Scratch {
             "git is absent: these ratchet tests cannot run, and a silent \
              pass would hide a gate that never fires (POL-026)"
         );
-        let _guard = CACHE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.subsec_nanos())
@@ -84,14 +56,10 @@ impl Scratch {
         let cache = root.join("cache");
         std::fs::create_dir_all(&dir).expect("scratch repo dir");
         std::fs::create_dir_all(&cache).expect("scratch cache dir");
-        let prev_xdg = std::env::var_os("XDG_CACHE_HOME");
-        std::env::set_var("XDG_CACHE_HOME", &cache);
         let s = Scratch {
             root,
             dir,
             cache,
-            prev_xdg,
-            _guard,
         };
         s.git(&["init", "--quiet", "--initial-branch=main"]);
         s.git(&["config", "user.name", "agent-slop-it"]);
@@ -140,7 +108,7 @@ impl Scratch {
     }
 
     fn pin(&self, session_id: &str) -> ratchet::SessionBaseline {
-        ratchet::pin_session(&builtin_config(), &self.repo(), session_id, None)
+        ratchet::pin_session(&builtin_config(), &self.repo(), &self.store(), session_id, None)
             .expect("pinning HEAD")
     }
 
@@ -156,10 +124,16 @@ impl Scratch {
             &self.repo(),
             Some(session_id),
             None,
-            &ratchet::Cache::open(true),
+            &self.store(),
             None,
         )
         .expect("git present and scratch is a repository")
+    }
+
+    /// The cache rooted in this scratch directory, laid out exactly as
+    /// `$XDG_CACHE_HOME/agent-slop` would be.
+    fn store(&self) -> ratchet::Cache {
+        ratchet::Cache::at(Some(self.cache.join("agent-slop")), true)
     }
 
     fn session_path(&self, session_id: &str) -> PathBuf {
@@ -334,7 +308,7 @@ fn block_mode_blocks_and_observe_mode_does_not() {
         "the pin landed in the scratch cache dir"
     );
     assert_eq!(
-        ratchet::read_session("sess").map(|p| p.commit).as_deref(),
+        ratchet::read_session(&s.store(), "sess").map(|p| p.commit).as_deref(),
         Some(pinned.commit.as_str())
     );
 
@@ -439,7 +413,7 @@ fn since_charges_the_merge_base_not_the_ref() {
         &repo,
         Some("sess"),
         Some("main"),
-        &ratchet::Cache::open(true),
+        &s.store(),
         None,
     )
     .expect("repository");
@@ -476,12 +450,12 @@ fn expired_session_files_are_swept_on_read() {
     drop(file);
 
     assert!(
-        ratchet::read_session("old").is_none(),
+        ratchet::read_session(&s.store(), "old").is_none(),
         "the expired pin must be swept"
     );
     assert!(!path.exists(), "sweep removes the file, not just the read");
     assert!(
-        ratchet::read_session("fresh").is_some(),
+        ratchet::read_session(&s.store(), "fresh").is_some(),
         "a fresh pin survives the same sweep"
     );
 }

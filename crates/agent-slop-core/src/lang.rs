@@ -27,7 +27,7 @@ use SupportLang::{Bash, Cpp, Go, Java, JavaScript, Nix, Python, Rust, Tsx, TypeS
 
 /// rust and java have the two-kind split; every other v1 language has a
 /// single `comment` kind.
-pub static LANGS: &[LangSpec] = &[
+pub(crate) static LANGS: &[LangSpec] = &[
     LangSpec {
         name: "rust",
         lang: Rust,

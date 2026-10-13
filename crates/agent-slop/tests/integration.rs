@@ -232,7 +232,7 @@ fn explain_prints_the_rule_note_and_exception_from_the_corpus() {
     let text = String::from_utf8_lossy(&out.stdout);
 
     let corpus: toml::Value =
-        toml::from_str(include_str!("../rules/comment-meta.toml")).expect("corpus parses");
+        toml::from_str(include_str!("../../agent-slop-core/rules/comment-meta.toml")).expect("corpus parses");
     let note = corpus["note"]["text"].as_str().expect("note.text").trim();
     let shape = corpus["exception"]["shape"]
         .as_str()

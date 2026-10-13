@@ -19,8 +19,8 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use crate::config::Mode;
-use crate::finding::Finding;
+use agent_slop_core::config::Mode;
+use agent_slop_core::finding::Finding;
 
 /// `fold.rs:96-100` weights `top_sessions` by defect count regardless of
 /// severity, so an unbounded row would dominate the digest.
@@ -323,7 +323,7 @@ fn append_line(path: &Path, line: &str) -> Option<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::finding::{Severity, Source, Suppression};
+    use agent_slop_core::finding::{Severity, Source, Suppression};
 
     fn finding(rule: &str, line: u32, suppression: Option<Suppression>) -> Finding {
         Finding {

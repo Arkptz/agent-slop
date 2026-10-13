@@ -6,7 +6,7 @@
 
 use std::path::PathBuf;
 
-use crate::finding::Severity;
+use agent_slop_core::finding::Severity;
 
 /// Exit code for a usage error (SPEC-006 "CLI surface and exit codes").
 pub const EXIT_USAGE: u8 = 3;

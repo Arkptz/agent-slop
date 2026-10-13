@@ -6,16 +6,12 @@
 //! rule safe.
 
 mod cli;
-mod config;
-mod finding;
 mod hook;
-mod judge;
-mod lang;
-mod linters;
 mod ratchet;
-mod rules;
 mod scan;
-mod telemetry;
+
+use agent_slop_core::{config, finding, rules};
+use agent_slop_integrations::{judge, telemetry};
 
 use std::collections::BTreeMap;
 use std::io::IsTerminal;
@@ -91,8 +87,14 @@ fn run_scan(args: &ScanArgs) -> ExitCode {
     // `--max-verdicts` being passed, because that flag is the caller saying
     // "audit", and a plain scan's output must not grow a section.
     if args.max_verdicts.is_some() && fmt == Format::Human {
-        for hit in judge::audit_needs(&cfg, &cwd, args.since.as_deref(), args.max_verdicts, deadline_of(&cfg, args)) {
-            out(&hit.render());
+        let base = ratchet::Repo::discover(&cwd).and_then(|repo| {
+            repo.resolve_ref(args.since.as_deref().unwrap_or(&cfg.ref_))
+                .map(|base| (repo.root, base))
+        });
+        if let Some((root, base)) = base {
+            for hit in judge::audit_needs(&cfg, &root, &base, args.max_verdicts, deadline_of(&cfg, args)) {
+                out(&hit.render());
+            }
         }
     }
 

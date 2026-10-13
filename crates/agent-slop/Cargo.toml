@@ -1,15 +1,21 @@
 [package]
 name = "agent-slop"
-version = "1.0.0"
-edition = "2021"
+description.workspace = true
+readme = "../../README.md"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
-ast-grep-core = "=0.45.3"
-ast-grep-language = "=0.45.3"
-blake3 = "1"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-toml = "0.8"
-unicode-normalization = "0.1"
-home = "0.5"
-
+agent-slop-core.workspace = true
+agent-slop-integrations.workspace = true
+blake3.workspace = true
+home.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
