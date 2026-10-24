@@ -12,13 +12,8 @@ A multi-crate Rust Cargo workspace: reproducible tooling, hardened CI, and built
 
 <!-- cargo-rdme start -->
 
-A starter Rust Cargo workspace wired with a Nix dev shell, SHA-pinned CI,
-supply-chain auditing, and a `dg` decision graph.
-
-This is the workspace's core library crate: reusable logic lives here, unit-
-and mutation-tested independently of the binary crate that consumes it. This
-crate-level documentation is the single source of truth for the README
-overview: edit it here and run `cargo rdme` to sync `README.md`.
+Comment extraction, rule evaluation, suppressions and configuration
+for agent-slop.
 
 <!-- cargo-rdme end -->
 

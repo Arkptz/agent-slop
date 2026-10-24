@@ -1,7 +1,7 @@
 # cargo-rdme reads the workspace's core library crate to generate the root
 # README. `workspace-project` selects the crate; `readme-path` keeps the output
 # at the workspace root rather than inside the crate directory.
-workspace-project = "app-core"
+workspace-project = "agent-slop-core"
 readme-path = "README.md"
 
 [entrypoint]
