@@ -21,20 +21,68 @@
         "x86_64-darwin"
       ];
 
-      perSystem = {system, ...}: let
+      perSystem = {
+        system,
+        self',
+        ...
+      }: let
         pkgs = import inputs.nixpkgs {
           inherit system;
           overlays = [inputs.rust-overlay.overlays.default];
         };
+        lib = pkgs.lib;
         # Pinned via rust-toolchain.toml (single source of truth).
         rustToolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
+        # The same channel without the editor components: the package and the
+        # clippy/fmt checks build with the toolchain the repo pins.
+        buildToolchain = pkgs.rust-bin.stable.${(lib.importTOML ./rust-toolchain.toml).toolchain.channel}.minimal.override {
+          extensions = ["clippy" "rustfmt"];
+        };
+        rustPlatform = pkgs.makeRustPlatform {
+          rustc = buildToolchain;
+          cargo = buildToolchain;
+        };
+        package = pkgs.callPackage ./nix/package.nix {inherit rustPlatform;};
+
+        # Reuse the package's source and vendored dependencies; replace the
+        # build with a single cargo invocation.
+        cargoCheck = name: script:
+          package.overrideAttrs (_: {
+            pname = "agent-slop-${name}";
+            doCheck = false;
+            doInstallCheck = false;
+            dontFixup = true;
+            buildPhase = ''
+              runHook preBuild
+              ${script}
+              runHook postBuild
+            '';
+            installPhase = "touch $out";
+            postInstall = "";
+          });
       in {
-        # Eval-only lint check — real lint runs via lefthook / CI.
-        checks.fmt-clippy = pkgs.runCommand "fmt-clippy-placeholder" {} ''
-          # Actual cargo fmt/clippy runs via lefthook pre-commit and CI.
-          # This derivation exists so `nix flake check` evaluates cleanly.
-          touch $out
-        '';
+        packages = {
+          default = package;
+          agent-slop = package;
+        };
+
+        apps.default = {
+          type = "app";
+          program = "${self'.packages.default}/bin/agent-slop";
+          meta.description = "Scan source comments for AI-written slop";
+        };
+
+        checks = {
+          build = package;
+
+          clippy = cargoCheck "clippy" ''
+            cargo clippy --offline --workspace --all-targets -- -D warnings
+          '';
+
+          fmt = cargoCheck "fmt" ''
+            cargo fmt --all --check
+          '';
+        };
 
         devShells.default = pkgs.mkShell {
           packages = [
