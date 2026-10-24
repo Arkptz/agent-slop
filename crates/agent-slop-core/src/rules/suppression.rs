@@ -39,6 +39,8 @@ fn is_referent_token(tok: &str) -> bool {
     let t = tok.trim_matches(|c: char| {
         !c.is_alphanumeric() && c != '/' && c != '-' && c != '_' && c != '.' && c != '#' && c != ':'
     });
+    // Sentence punctuation around an id (`ADR-064:`, `SPEC-006.`) is not part of it.
+    let t = t.trim_matches(|c: char| matches!(c, ':' | ',' | ';' | '.' | '(' | ')'));
     // date:YYYY-MM-DD
     if let Some(rest) = t.strip_prefix("date:") {
         let mut parts = rest.splitn(3, '-');
@@ -223,6 +225,14 @@ mod tests {
         let a = parse_allow("// agent-slop: allow slop/comment-history").unwrap();
         assert!(!a.valid);
         assert_eq!(a.violation, Some(EMPTY_RULE));
+    }
+
+    /// Calibration S2: sentence punctuation around an id is not part of it.
+    #[test]
+    fn punctuation_around_a_decision_id_still_counts() {
+        for s in ["ADR-064:", "(SPEC-006.)", "POL-024;", "see TASK-019,"] {
+            assert!(referent().is_match(s), "{s}");
+        }
     }
 
     #[test]

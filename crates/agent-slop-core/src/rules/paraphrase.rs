@@ -3,18 +3,20 @@
 //! tokens against the neighbouring AST node's identifiers; a phrase list
 //! cannot do that, and that is why this engine is ast-grep-based.
 //!
-//! The comparison: tokenize the comment into lowercase words, drop
-//! stopwords and short tokens, and count how many distinct tokens equal
-//! (or are contained in) identifiers of the next code construct. At
-//! `min_shared_identifiers` or more shared tokens over a comment of at
-//! least `min_comment_words` words, the comment is a restatement.
+//! The comparison: tokenize the adjacent comment block into lowercase
+//! words, drop stopwords and short tokens, and count how many distinct
+//! tokens equal identifiers of the next code construct. The block is a
+//! restatement at `min_shared_identifiers` or more shared tokens that make
+//! up `min_shared_ratio` of its words, over at least `min_comment_words`
+//! words, when it is at most `max_block_lines` lines long and no line gives
+//! a cause, a consequence or a source.
 
 use super::corpus::RuleFile;
 use crate::lang::Comment;
 
 /// Words too generic to count as overlap with the code below.
 fn is_stopword(w: &str, stopwords: &[String]) -> bool {
-    stopwords.iter().any(|s| s == w) || w.len() < 3
+    stopwords.iter().any(|s| s == w) || w.chars().count() < 3
 }
 
 fn tokens(text: &str, stopwords: &[String]) -> Vec<String> {
@@ -79,16 +81,45 @@ fn gloss(word: &str, glossary: &[String]) -> String {
         .unwrap_or_else(|| word.to_string())
 }
 
-/// True when the comment restates the code below it, per the rule's
-/// thresholds. Returns the shared tokens (for the message) when it fires.
+/// Denominator of the overlap density. A decorated banner
+/// (`── name (qualifier) ──`) names its section before the first
+/// parenthesis; the qualifier is not counted against it.
+fn density_words(block: &str, words: &[String], m: &crate::rules::corpus::MatchSection) -> usize {
+    let t = super::lex::payload(block).trim_start();
+    let banner = t.starts_with(['─', '-', '=']);
+    match t.split_once('(') {
+        Some((head, _)) if banner => tokens(head, &m.stopwords).len().max(1),
+        _ => words.len(),
+    }
+}
+
+/// True when the comment block led by `comment` restates the code below it,
+/// per the rule's thresholds. `block` is the whole adjacent comment
+/// paragraph (payload text) and `block_lines` its physical line count: the
+/// why/referent exemption and the overlap density are judged over the
+/// paragraph, never over one of its lines. Returns the shared tokens (for
+/// the message) when it fires.
 #[must_use]
-pub fn paraphrase_hit(rule: &RuleFile, comment: &Comment) -> Option<Vec<String>> {
+pub fn paraphrase_hit(
+    rule: &RuleFile,
+    comment: &Comment,
+    block: &str,
+    block_lines: usize,
+) -> Option<Vec<String>> {
     let m = &rule.r#match;
     let min_shared = m.min_shared_identifiers.unwrap_or(2);
     let min_words = m.min_comment_words.unwrap_or(3);
+    let min_ratio = m.min_shared_ratio.unwrap_or(0.0);
+    let max_lines = m.max_block_lines.unwrap_or(usize::MAX);
 
     // `//!` documents the ENCLOSING module, not the statement below it.
     if is_inner_doc(&comment.text) {
+        return None;
+    }
+
+    // A paragraph is an explanation, not a restatement: every deletable
+    // echo in the calibration sample was one or two lines.
+    if block_lines > max_lines {
         return None;
     }
 
@@ -99,14 +130,14 @@ pub fn paraphrase_hit(rule: &RuleFile, comment: &Comment) -> Option<Vec<String>>
     // module cannot know (deploy mechanics, another service) or argues
     // permission: those comments were flagged by reviewers regardless of
     // their why-content (gpt4 corpus, FINDINGS.md §10.2).
-    if super::lex::any_phrase(&m.why_exemption_cancels, &comment.text).is_none()
-        && (super::lex::any_phrase(&m.why_markers, &comment.text).is_some()
-            || super::lex::has_referent(&comment.text))
+    if super::lex::any_phrase(&m.why_exemption_cancels, block).is_none()
+        && (super::lex::any_phrase(&m.why_markers, block).is_some()
+            || super::lex::has_referent(block))
     {
         return None;
     }
 
-    let words: Vec<String> = tokens(&comment.text, &m.stopwords)
+    let words: Vec<String> = tokens(block, &m.stopwords)
         .iter()
         .map(|w| gloss(w, &m.ru_glossary))
         .collect();
@@ -121,7 +152,15 @@ pub fn paraphrase_hit(rule: &RuleFile, comment: &Comment) -> Option<Vec<String>>
             shared.push(w.clone());
         }
     }
-    if shared.len() >= min_shared {
+    // Density, not count: a long explanation names two identifiers by
+    // accident, a restatement is made of them.
+    let density = f64::from(u32::try_from(shared.len()).unwrap_or(u32::MAX))
+        / f64::from(
+            u32::try_from(density_words(block, &words, m))
+                .unwrap_or(1)
+                .max(1),
+        );
+    if shared.len() >= min_shared && density >= min_ratio {
         Some(shared)
     } else {
         None
@@ -223,28 +262,38 @@ mod tests {
             col: 1,
             end_line: 1,
             next_code_ids: ids.iter().map(std::string::ToString::to_string).collect(),
+            is_docstring: false,
         }
+    }
+
+    fn hit(text: &str, ids: &[&str]) -> Option<Vec<String>> {
+        let lines = text.lines().count();
+        paraphrase_hit(&rule(), &comment(text, ids), text, lines)
     }
 
     #[test]
     fn restatement_of_the_statement_below_fires() {
         // The shape that forced the engine choice: the comment names the
         // very identifiers the code below declares.
-        let c = comment(
-            "// Iterate over the users and filter the active users list",
-            &["iterate_users", "filter_active_users"],
+        assert!(
+            hit(
+                "// Iterate over the users and filter the active users list",
+                &["iterate_users", "filter_active_users"]
+            )
+            .is_some()
         );
-        assert!(paraphrase_hit(&rule(), &c).is_some());
     }
 
     #[test]
     fn why_comment_does_not_fire() {
         // Explains a constraint, shares only one token with the code.
-        let c = comment(
-            "// The upstream API rejects captions over 1024 bytes, so truncate before send",
-            &["send_caption"],
+        assert!(
+            hit(
+                "// The upstream API rejects captions over 1024 bytes, so truncate before send",
+                &["send_caption"]
+            )
+            .is_none()
         );
-        assert!(paraphrase_hit(&rule(), &c).is_none());
     }
 
     /// Real 'why' comments from a PR scan that the overlap count flagged.
@@ -268,10 +317,7 @@ mod tests {
                 &["editable_install", "hook"][..],
             ),
         ] {
-            assert!(
-                paraphrase_hit(&rule(), &comment(text, ids)).is_none(),
-                "{text}"
-            );
+            assert!(hit(text, ids).is_none(), "{text}");
         }
     }
 
@@ -279,7 +325,6 @@ mod tests {
     /// restatement; the glossary pairs translate the overlap back.
     #[test]
     fn russian_restating_comment_fires_through_the_glossary() {
-        let r = rule();
         for (text, ids) in [
             ("# порт сервиса для прокси", &["port", "service"][..]),
             (
@@ -288,37 +333,117 @@ mod tests {
             ),
             ("# имя сервиса биллинга", &["service_name"][..]),
         ] {
-            let c = comment(text, ids);
-            assert!(paraphrase_hit(&r, &c).is_some(), "{text}");
+            assert!(hit(text, ids).is_some(), "{text}");
         }
         // A Russian comment with a cause is still exempt.
-        let c = comment("# порт, иначе проксируется мимо", &["port"][..]);
-        assert!(paraphrase_hit(&r, &c).is_none());
+        assert!(hit("# порт, иначе проксируется мимо", &["port"]).is_none());
         // A Russian word not in the glossary does not fake overlap.
-        let c = comment("# расписание запуска", &["port"][..]);
-        assert!(paraphrase_hit(&r, &c).is_none());
+        assert!(hit("# расписание запуска", &["port"]).is_none());
     }
 
     #[test]
     fn no_code_below_never_fires() {
-        let c = comment("// Returns the parsed request from the parser", &[]);
-        assert!(paraphrase_hit(&rule(), &c).is_none());
+        assert!(hit("// Returns the parsed request from the parser", &[]).is_none());
     }
 
     #[test]
     fn short_comments_never_fire() {
-        let c = comment("// parse request", &["parse_request"]);
-        assert!(paraphrase_hit(&rule(), &c).is_none());
+        assert!(hit("// parse request", &["parse_request"]).is_none());
     }
 
     #[test]
     fn camel_case_identifiers_split_into_tokens() {
-        let c = comment(
-            "// Parse the incoming request payload here",
-            &["parseIncomingRequestPayload"],
+        assert!(
+            hit(
+                "// Parse the incoming request payload here",
+                &["parseIncomingRequestPayload"]
+            )
+            .is_some()
         );
-        // shared: parse, incoming(?), request, payload — at least parse,
-        // request, payload >= 2.
-        assert!(paraphrase_hit(&rule(), &c).is_some());
+    }
+
+    /// The why/referent exemption is judged over the whole block: the
+    /// calibration corpus had two-line paragraphs where only one line
+    /// carried the marker (alpha-server/default.nix:435).
+    #[test]
+    fn why_marker_on_a_sibling_line_exempts_the_block() {
+        // Line 1 alone is a restatement; the marker sits on line 2.
+        let line1 = "# rcu stall timeout watchdog raised";
+        let ids = ["rcu_stall_timeout", "watchdog"];
+        let lead = comment(line1, &ids);
+        assert!(paraphrase_hit(&rule(), &lead, line1, 1).is_some());
+        let block = format!("{line1} because a preempted vCPU crosses the default");
+        assert!(paraphrase_hit(&rule(), &lead, &block, 2).is_none());
+    }
+
+    /// Calibration S6 (engine.rs:6110): a bare "so" opens a consequence.
+    #[test]
+    fn bare_so_marks_a_consequence() {
+        let ids = ["runnable_work", "driver_permit"];
+        assert!(hit("# runnable work driver permit", &ids).is_some());
+        assert!(hit("# runnable work, so the driver permit goes", &ids).is_none());
+    }
+
+    /// Calibration row 0 shape: shared tokens are two of many — density
+    /// 3/16 sits below the 0.3 threshold.
+    #[test]
+    fn explanation_that_names_two_identifiers_stays_below_the_density_floor() {
+        let text = "# the leader starttime placeholder is read here once per session\n# and the whole sequence stays valid for every later attempt made";
+        assert!(hit(text, &["leader_starttime", "placeholder"]).is_none());
+    }
+
+    /// Calibration S1/row 18: long paragraphs are explanations.
+    #[test]
+    fn blocks_over_max_block_lines_never_fire() {
+        let text = "# alpha beta gamma\n# delta epsilon zeta\n# eta theta iota";
+        assert!(hit(text, &["alpha", "beta", "gamma", "delta"]).is_none());
+    }
+
+    /// Calibration S2/row 33: a decision-doc id ending in `:` is a
+    /// referent and exempts the block.
+    #[test]
+    fn referent_with_trailing_punctuation_is_recognised() {
+        let text = "# ADR-064: slop scanner agent hooks";
+        assert!(hit(text, &["slop_scanner", "agent_hooks"]).is_none());
+        assert!(
+            hit(
+                "# slop scanner agent hooks",
+                &["slop_scanner", "agent_hooks"]
+            )
+            .is_some()
+        );
+    }
+
+    /// Calibration row 26 (ai-agents.nix:859): the parenthetical qualifier
+    /// of a decorated banner stays out of the density denominator.
+    #[test]
+    fn banner_density_ignores_the_parenthetical() {
+        assert!(
+            hit(
+                "# ── code-economy (READ-ONLY reuse lead-finder) ──────────",
+                &["code-economy"]
+            )
+            .is_some()
+        );
+        // The same words as prose, not a banner, stay under the floor.
+        assert!(
+            hit(
+                "# code-economy (READ-ONLY reuse lead-finder) wiring",
+                &["code-economy"]
+            )
+            .is_none()
+        );
+    }
+
+    /// Calibration row 43 (retry.py:23, TRUE): the Russian short word "из" is
+    /// not counted against the density (chars, not bytes).
+    #[test]
+    fn short_cyrillic_words_are_stopwords() {
+        let mut c = comment(
+            "\"\"\"Пауза ровно на retry_after из ответа Telegram.\"\"\"",
+            &["wait_retry_after"],
+        );
+        c.is_docstring = true;
+        assert!(paraphrase_hit(&rule(), &c, &c.text, 1).is_some());
     }
 }

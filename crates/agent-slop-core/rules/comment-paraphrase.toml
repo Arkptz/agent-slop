@@ -7,9 +7,15 @@ id = "comment-paraphrase"
 severity = "warning"
 
 [match]
-# Structural rule; the thresholds live in the matcher.
+# Structural rule; the thresholds live in the matcher. The verdict is per
+# comment block (adjacent same-column lines), one finding at its first line.
 min_shared_identifiers = 2
 min_comment_words = 3
+# Shared identifiers / non-stopword comment tokens: a restatement is made of
+# the names below, an explanation only mentions two of them.
+min_shared_ratio = 0.3
+# Longer comment blocks are explanations; judged blocks are 1-2 lines.
+max_block_lines = 2
 # Comment tokens that never count towards the overlap.
 stopwords = [
   "the", "a", "an", "this", "that", "of", "to", "for", "and", "or", "is",
@@ -38,7 +44,7 @@ ru_glossary = [
 # issue ref, path) states a cause or a consequence and is never a
 # restatement. Trailing `*` is a stem.
 why_markers = [
-  "because", "otherwise", "since", "due to", "so that", "without", "unless",
+  "because", "otherwise", "since", "due to", "so that", "so", "without", "unless",
   "breaks", "fails", "else", "instead of", "requires", "would",
   "иначе", "из-за", "потому что", "так как", "чтобы", "без", "ломает*",
   "падает", "упад*", "требует", "вместо",
@@ -60,7 +66,7 @@ why_exemption_cancels = [
 ]
 
 [exception]
-shape = "A comment whose overlap with the identifiers below explains WHY the code is shaped that way (a constraint the code cannot express), not WHAT the code does. 'Why' comments are the point of commenting."
+shape = "A comment whose overlap with the identifiers below explains WHY the code is shaped that way (a constraint the code cannot express), not WHAT the code does. The verdict covers the whole adjacent comment block: a cause, consequence ('because', 'so') or referent (URL, ADR-064:, path) on ANY line exempts it, and blocks over 2 lines or with shared identifiers under 30% of their words are never flagged. 'Why' comments are the point of commenting."
 
 [note]
-text = "Delete the restatement — the code already says it. Keep the comment only if it states a constraint the code cannot (why this shape, what breaks otherwise); rewrite it in those terms."
+text = "Delete the restatement — the code already says it. Fires once per 1-2 line comment block whose words are mostly the identifiers of the statement below. Keep the comment only if it states a constraint the code cannot (why this shape, what breaks otherwise); rewrite it in those terms."

@@ -105,6 +105,8 @@ pub struct Comment {
     /// Identifiers of the first code construct after this comment (empty
     /// when the file ends in comments).
     pub next_code_ids: Vec<String>,
+    /// A python string statement standing in for a comment.
+    pub is_docstring: bool,
 }
 
 /// Identifier-ish node kinds across the v1 grammars: value/field/property
@@ -197,6 +199,7 @@ pub fn extract(spec: &LangSpec, source: &str) -> Vec<Comment> {
             col: line_no(start.column(node)),
             end_line,
             next_code_ids,
+            is_docstring: false,
         });
     }
     if spec.name == "python" {
@@ -277,6 +280,7 @@ fn docstrings(root: &Node<'_, StrDoc<SupportLang>>) -> Vec<Comment> {
                         col: line_no(start.column(&string)),
                         end_line: line_no(string.end_pos().line()),
                         next_code_ids: owner_name.into_iter().collect(),
+                        is_docstring: true,
                     });
                 }
             }

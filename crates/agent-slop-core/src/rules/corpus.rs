@@ -71,6 +71,14 @@ pub struct MatchSection {
     pub min_shared_identifiers: Option<usize>,
     #[serde(default)]
     pub min_comment_words: Option<usize>,
+    /// `comment-paraphrase`: shared identifiers over the comment's
+    /// non-stopword tokens must reach this density.
+    #[serde(default)]
+    pub min_shared_ratio: Option<f64>,
+    /// `comment-paraphrase`: longer comment blocks are explanations, not
+    /// restatements, and are never judged.
+    #[serde(default)]
+    pub max_block_lines: Option<usize>,
     #[serde(default)]
     pub word_boundaries: bool,
     #[serde(default)]

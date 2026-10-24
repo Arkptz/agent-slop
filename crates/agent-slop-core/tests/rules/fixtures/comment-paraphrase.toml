@@ -1,0 +1,244 @@
+# Fixtures for slop/comment-paraphrase. Positives are calibration-verified
+# deletable restatements (POL-026: every TRUE row of the 2026-10-24
+# calibration must keep firing), negatives are the recurring FALSE shapes —
+# multi-line why-paragraphs, low-density mentions, operator notes, docstrings.
+[[case]]
+family = "comment-paraphrase"
+expect = "hit"
+lang = "rust"
+provenance = "exarch/crates/exarchd/src/store/mod.rs:748"
+source = '''
+// THE crux (R3-3): reject when the delegate's role == the gated node's role.
+if delegate_role == node_role {
+    txn.rollback().await?;
+}
+'''
+
+[[case]]
+family = "comment-paraphrase"
+expect = "hit"
+lang = "nix"
+provenance = "config_v3-onyx/flake/checks.nix:982"
+source = '''
+# Root password for test accessibility
+users.users.root.password = "root";
+'''
+
+[[case]]
+family = "comment-paraphrase"
+expect = "hit"
+lang = "rust"
+provenance = "exarch-tui/src/golden_tests.rs:3306 (wt:subagent-01a106c9-0790-73c0-8cbf-56808a11f8a9)"
+source = '''
+// Render one state and return its full buffer text.
+fn rendered_text(state: &AppState) -> String {
+    let backend = TestBackend::new(120, 40);
+    buffer_text(&terminal)
+}
+'''
+
+[[case]]
+family = "comment-paraphrase"
+expect = "hit"
+lang = "python"
+provenance = "work/prop-trade/gpu/probe_sources.py:44"
+source = '''
+def main():
+    # The bar timeline: 15m bars from read_months is the join target.
+    import sys
+    import os
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from protocol import read_months
+    ts, o, h, l, c, v = read_months('data', 'BTCUSDT', '15m')
+    bar_secs = 900
+'''
+
+[[case]]
+family = "comment-paraphrase"
+expect = "hit"
+lang = "python"
+provenance = "config_v3/tests/onyx-code-interpreter-service-test.py:146"
+source = '''
+# --- ownerless legacy file is unreachable
+legacy = routes.get_file_storage().save_file(b"legacy", "legacy.txt")
+'''
+
+[[case]]
+family = "comment-paraphrase"
+expect = "hit"
+lang = "python"
+provenance = "work/gpt4/wt-agent-mvp/agent-bot/agent_bot/telegram/retry.py:23"
+source = '''
+def _wait_retry_after(state: RetryCallState) -> float:
+    """Пауза ровно на retry_after из ответа Telegram."""
+    return float(error.retry_after)
+'''
+
+[[case]]
+family = "comment-paraphrase"
+expect = "hit"
+lang = "nix"
+provenance = "config_v3-onyx/modules/nixos/services/langfuse.nix:450"
+source = '''
+# ── OCI containers (docker) ─────────────────────────────────────────────
+virtualisation.oci-containers.containers = { };
+'''
+
+[[case]]
+family = "comment-paraphrase"
+expect = "hit"
+lang = "nix"
+provenance = "config_v3/users/arkptz/programs/ai-agents.nix:859 (calibration row 26 flagged at :889)"
+source = '''
+# ── code-economy (READ-ONLY reuse lead-finder) ──────────────────────
+code-economy = {
+  crossHarnessUtility = true;
+};
+'''
+
+[[case]]
+family = "comment-paraphrase"
+expect = "miss"
+lang = "nix"
+provenance = "config_v3-onyx/hosts/alpha-server/default.nix:435 (S1: why-marker on a sibling line)"
+source = '''
+# No watchdog here, so the panic sysctls are the ONLY unattended-recovery
+# path — a stall that wedges PID 1 has nothing else to fall back on, and the
+# provider's console is not a path this config controls.
+myConfig.system.unattendedRecovery.rcuStallTimeoutSec = 60;
+'''
+
+[[case]]
+family = "comment-paraphrase"
+expect = "miss"
+lang = "rust"
+provenance = "exarch/crates/exarchd/src/engine.rs:6110 (S6: bare-so consequence)"
+source = '''
+// No runnable or parked work remains: every non-terminal node is an
+// external waiter or a pending descendant of one, so the driver
+// returns and releases its permit instead of idle-polling.
+let no_runnable_work = snapshot.runnable == 0 && snapshot.parked == 0;
+'''
+
+[[case]]
+family = "comment-paraphrase"
+expect = "miss"
+lang = "rust"
+provenance = "exarch/crates/exarch-broker/src/session.rs:537 (row 0: density 0.33 over 3 lines)"
+source = '''
+// No peer → `peer_verdict` short-circuits to `NoPeerAttestation`
+// before reading the leader starttime, so the placeholder is never
+// evaluated and cannot weaken the gate.
+None => peer_verdict(None, expected_inode, 0, expected_leader_starttime, None),
+'''
+
+[[case]]
+family = "comment-paraphrase"
+expect = "miss"
+lang = "rust"
+provenance = "exarch/crates/exarchd/src/store/prompt.rs:1376 (row 5: why-paragraph, 4 lines)"
+source = '''
+// The provenance render replaces the plain render as the production
+// source of the fragment text: its stripped output is byte-identical to
+// `PromptRenderer::render` (the C3 red test's pinned property), so the
+// spans cost nothing.
+match renderer.render_with_provenance(body, render_args) {
+'''
+
+[[case]]
+family = "comment-paraphrase"
+expect = "miss"
+lang = "nix"
+provenance = "exarch/nix/exarch-nixos.nix:255 (row 27: 6-line block, density 0.20)"
+source = '''
+# One [[backend]] per broker.backends attr (attr name → name). `stateful`
+# is forced false (the core rejects true at load; a Nix assertion also
+# guards it). secret_env carries env-var NAMES only — values arrive via
+# LoadCredential (see broker.credentialFiles / T4), never the store.
+# An isolated backend is spawned by its own socket unit; the broker's child
+# is only a socat bridge to that socket.
+backends = mapAttrs mkBackend cfg.broker.backends;
+'''
+
+[[case]]
+family = "comment-paraphrase"
+expect = "miss"
+lang = "nix"
+provenance = "config_v3/pkgs/default.nix:115 (S2: referent ends in ':')"
+source = '''
+# ADR-064: AST-based slop scanner serving the agent hooks (advisory
+# PostToolUse + ratcheting Stop gate), the CLI and the slop-sweep skill
+# from one binary. Contract in SPEC-006; telemetry rides the same
+# ~/reviews shard as the miner (POL-024).
+agent-slop = super.callPackage ./agent-slop { };
+'''
+
+[[case]]
+family = "comment-paraphrase"
+expect = "miss"
+lang = "nix"
+provenance = "config_v3-onyx/modules/nixos/services/langfuse.nix:361 (S1: one paragraph, why + referent elsewhere)"
+source = '''
+# ── Host Postgres: langfuse's DB spec (inversion: the app sets the generic
+#    postgres module's options; postgres.nix knows nothing about langfuse).
+#    Vanilla pg — langfuse v3 needs NO extensions (analytics live in
+#    ClickHouse). Reached over loopback by the host-net web/worker containers.
+services.postgresql = { enable = true; };
+'''
+
+[[case]]
+family = "comment-paraphrase"
+expect = "miss"
+lang = "python"
+provenance = "trading-media/scripts/videokit/geometry.py:67 (row 36: 2-line block, shared tokens 2 of 8)"
+source = '''
+# A label must be perceptually tied to its own marker, not an adjacent
+# one; the swap below breaks the pairing the checker relies on.
+for leader in markers:
+'''
+
+[[case]]
+family = "comment-paraphrase"
+expect = "miss"
+lang = "nix"
+provenance = "config_v3-onyx/hosts/alpha-server/default.nix:153 (row 78: banner + D-V decision why)"
+source = '''
+# ── LLM relay registry ─────────────────────────────────────────────────
+# Even though the gateway now runs HERE, consumers still resolve it through
+# the tailnet endpoint rather than loopback (D-V): the gateway can move again
+# with one knob, and the value stays identical on every host.
+llmRelay = {
+  relays.litellm = { };
+};
+'''
+
+[[case]]
+family = "comment-paraphrase"
+expect = "miss"
+lang = "nix"
+provenance = "config_v3/users/arkptz/programs/ai-agents.nix:218 (row 25: reads as tool vocab, no overlap)"
+source = '''
+# grok frontmatter for a READ-ONLY agent that must still reach its MCP servers.
+tools = "search_tool, use_tool, read_file";
+'''
+
+[[case]]
+family = "comment-paraphrase"
+expect = "miss"
+lang = "python"
+provenance = "trading-media/tests/test_pipeline_failures.py:1 (row 59: module docstring, docstring-restates-name's shape)"
+source = '''
+"""Renderer subprocess failure and selected-font provenance tests."""
+
+import pytest
+'''
+
+[[case]]
+family = "comment-paraphrase"
+expect = "miss"
+lang = "rust"
+provenance = "exarch/crates/exarchd/src/daemon/dispatch.rs:2080 (row 4: DEBATABLE allow-annotation note, kept quiet)"
+source = '''
+#[allow(clippy::too_many_arguments)] // ctx + caller + the GetArtifact request fields
+async fn dispatch_get_artifact(ctx: &Arc<DaemonCtx>) {}
+'''

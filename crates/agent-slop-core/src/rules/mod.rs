@@ -57,11 +57,20 @@ pub fn scan_source(cfg: &ResolvedConfig, file: &str, source: &str) -> Vec<Findin
                 continue;
             }
         }
+        let paraphrase = paraphrase_block(&comments, idx);
         for rule in corpus.rules.values() {
             if rule.meta.severity == "off" && cfg.severity_for(&rule_id(&rule.meta.id)).is_none() {
                 continue;
             }
-            if let Some(finding) = evaluate_rule(cfg, rule, file, comment, &block, &lines) {
+            if let Some(finding) = evaluate_rule(
+                cfg,
+                rule,
+                file,
+                comment,
+                &block,
+                paraphrase.as_ref(),
+                &lines,
+            ) {
                 findings.push(finding);
             }
         }
@@ -99,16 +108,19 @@ fn meta_finding(
     }
 }
 
+/// Two comments belong to one paragraph when the second starts on the line
+/// the first ends on (or the next) in the same column.
+fn adjacent(a: &Comment, b: &Comment) -> bool {
+    // `end_line` counts the trailing newline, and grammars disagree on
+    // whether a one-line comment's node ends on its own line or the next:
+    // rust `///` ends on the next, python `#` on its own. Accept both.
+    (b.line == a.end_line || b.line == a.end_line + 1) && a.col == b.col
+}
+
 /// The text of the run of adjacent line comments containing `comments[idx]`.
 /// Grammars that emit one node per `#` line split a paragraph into lines, and
 /// a rule counting a comment's own words must see the whole paragraph.
 fn block_text(comments: &[Comment], idx: usize) -> String {
-    // `end_line` counts the trailing newline, and grammars disagree on
-    // whether a one-line comment's node ends on its own line or the next:
-    // rust `///` ends on the next, python `#` on its own. Accept both.
-    let adjacent = |a: &Comment, b: &Comment| {
-        (b.line == a.end_line || b.line == a.end_line + 1) && a.col == b.col
-    };
     let mut start = idx;
     while start > 0 && adjacent(&comments[start - 1], &comments[start]) {
         start -= 1;
@@ -124,12 +136,56 @@ fn block_text(comments: &[Comment], idx: usize) -> String {
         .join(" ")
 }
 
+/// The comment paragraph `comment-paraphrase` judges as one unit.
+struct ParaphraseBlock {
+    text: String,
+    lines: usize,
+}
+
+/// The paragraph led by `comments[idx]`, or `None` when `idx` is not its
+/// first line: the verdict is one finding per paragraph, anchored at the
+/// leader. Standalone allow lines never join a paragraph; a python
+/// docstring is a paragraph of its own.
+fn paraphrase_block(comments: &[Comment], idx: usize) -> Option<ParaphraseBlock> {
+    let lead = &comments[idx];
+    if lead.is_docstring {
+        return Some(ParaphraseBlock {
+            text: lex::payload(&lead.text).to_string(),
+            lines: lead.text.trim_end().lines().count(),
+        });
+    }
+    let member = |c: &Comment| !c.is_docstring && !suppression::is_standalone_allow(&c.text);
+    if !member(lead) {
+        return None;
+    }
+    if idx > 0 && member(&comments[idx - 1]) && adjacent(&comments[idx - 1], &comments[idx]) {
+        return None;
+    }
+    let mut end = idx;
+    while end + 1 < comments.len()
+        && member(&comments[end + 1])
+        && adjacent(&comments[end], &comments[end + 1])
+    {
+        end += 1;
+    }
+    let run = &comments[idx..=end];
+    Some(ParaphraseBlock {
+        text: run
+            .iter()
+            .map(|c| lex::payload(&c.text))
+            .collect::<Vec<_>>()
+            .join(" "),
+        lines: run.iter().map(|c| c.text.trim_end().lines().count()).sum(),
+    })
+}
+
 fn evaluate_rule(
     cfg: &ResolvedConfig,
     rule: &RuleFile,
     file: &str,
     comment: &Comment,
     block: &str,
+    paraphrase: Option<&ParaphraseBlock>,
     lines: &[&str],
 ) -> Option<Finding> {
     let id = rule_id(&rule.meta.id);
@@ -143,7 +199,8 @@ fn evaluate_rule(
             .map(|p| format!("session residue '{p}' — deferral with no owner")),
         "review-jargon" => lex::anchored_marker_hit(m, &comment.text)
             .map(|p| format!("review marker '{p}' frozen into the source")),
-        "comment-paraphrase" => paraphrase::paraphrase_hit(rule, comment)
+        "comment-paraphrase" => paraphrase
+            .and_then(|b| paraphrase::paraphrase_hit(rule, comment, &b.text, b.lines))
             .map(|shared| format!("restates the code below ({})", shared.join(", "))),
         "todo-no-condition" => {
             let marker = lex::marker_present(m, &comment.text)?;
@@ -312,6 +369,38 @@ mod tests {
             .collect();
         assert_eq!(hist.len(), 1, "carried, not dropped");
         assert!(hist[0].suppression.as_ref().is_some_and(|s| s.valid));
+    }
+
+    /// Calibration S1: a two-line restating block is one finding anchored at
+    /// its first line, not one per physical line.
+    #[test]
+    fn paraphrase_is_one_finding_per_comment_block() {
+        let cfg = builtin_config();
+        let src =
+            "// retry after header\n// parse retry after value\nfn parse_retry_after_header() {}\n";
+        let hits: Vec<_> = scan_source(&cfg, "a.rs", src)
+            .into_iter()
+            .filter(|x| x.rule == "slop/comment-paraphrase")
+            .collect();
+        assert_eq!(hits.len(), 1, "{hits:?}");
+        assert_eq!(hits[0].line, 1);
+    }
+
+    /// Calibration S1: the why-marker on the second line exempts the block.
+    #[test]
+    fn paraphrase_why_marker_on_a_later_line_exempts_the_block() {
+        let cfg = builtin_config();
+        let fires = |src: &str| {
+            scan_source(&cfg, "a.rs", src)
+                .iter()
+                .any(|x| x.rule == "slop/comment-paraphrase")
+        };
+        assert!(fires(
+            "// retry after header parse\nfn parse_retry_after_header() {}\n"
+        ));
+        assert!(!fires(
+            "// retry after header parse\n// because the proxy drops it\nfn parse_retry_after_header() {}\n"
+        ));
     }
 
     #[test]
