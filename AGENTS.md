@@ -20,7 +20,9 @@ cargo deny check                     # licenses + advisories + bans
 ## Workspace layout
 
 - Cargo workspace: member crates live under `crates/*`.
-- `crates/core` (`app-core`) — library logic; `crates/app` — thin binary.
+- `crates/agent-slop-core` — comment extraction, rule engine, config model and
+  the rule corpus; `crates/agent-slop-integrations` — linter adapters, judge
+  transport, telemetry; `crates/agent-slop` — the binary (CLI, hook, ratchet).
 - Shared metadata, dependency versions, and lints are defined once in the root
   `Cargo.toml` (`[workspace.package]`, `[workspace.dependencies]`,
   `[workspace.lints]`) and inherited per crate with `*.workspace = true`.

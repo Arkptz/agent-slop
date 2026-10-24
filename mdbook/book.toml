@@ -1,12 +1,12 @@
 [book]
-title = "Project Guide"
-authors = ["Project Owner"]
+title = "agent-slop"
+authors = ["arkptz"]
 language = "en"
 src = "guide"
 
 [output.html]
-git-repository-url = ""
-edit-url-template = ""
+git-repository-url = "https://github.com/Arkptz/agent-slop"
+edit-url-template = "https://github.com/Arkptz/agent-slop/edit/main/mdbook/{path}"
 
 [output.html.search]
 enable = true
