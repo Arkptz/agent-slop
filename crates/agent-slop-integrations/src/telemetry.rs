@@ -59,12 +59,145 @@ fn truncate(s: &str, cap: usize) -> String {
     s.chars().take(cap).collect()
 }
 
-/// The digest's project key is the checkout's directory name, matching
-/// what the recorder writes.
+// Closed prefix list: the ephemeral realms. $TMPDIR is added at runtime
+// when set and absolute.
+const EPHEMERAL_ROOTS: &[&str] = &["/tmp", "/var/tmp"];
+
+// Project names become ~/reviews/<name>/ directory names (POL-024, forever)
+// and the recorder enforces this set on basenames: keep all producers
+// identical.
+fn is_safe_project_name(s: &str) -> bool {
+    !s.is_empty()
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+}
+
+// A `.git` pointer file is ambiguous: linked worktree or submodule. Only
+// the worktree shape folds into the repo it belongs to; a submodule
+// keeps its own basename.
+fn gitdir_repo_component(gitdir: &str) -> Option<String> {
+    let p = gitdir.trim();
+    let i = p.find("/.git/worktrees/")?;
+    let name = p[..i].rsplit('/').next()?;
+    if name != "." && name != ".." && is_safe_project_name(name) {
+        Some(name.to_string())
+    } else {
+        None
+    }
+}
+
+// Exact match or a real descendant: "/tmp2" must not count as "/tmp".
+fn under_prefix(s: &str, prefix: &str) -> bool {
+    s == prefix || s.starts_with(&format!("{prefix}/"))
+}
+
+fn is_ephemeral(cwd: &Path, home: Option<&Path>, tmpdir: Option<&str>) -> bool {
+    let s = cwd.to_string_lossy();
+    if EPHEMERAL_ROOTS.iter().any(|p| under_prefix(&s, p)) {
+        return true;
+    }
+    if let Some(tmpdir) = tmpdir {
+        // Absolute and non-root only; a trailing slash would defeat the
+        // descendant check.
+        let t = tmpdir.trim_end_matches('/');
+        if t.starts_with('/') && t.len() > 1 && under_prefix(&s, t) {
+            return true;
+        }
+    }
+    if let Some(h) = home {
+        for dot in [".grok", ".cache"] {
+            if cwd.starts_with(h.join(dot)) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn basename_or_unknown(p: &Path) -> String {
+    p.file_name()
+        .and_then(|n| n.to_str())
+        .filter(|s| is_safe_project_name(s))
+        .unwrap_or("unknown")
+        .to_string()
+}
+
+/// The digest's project key: the same attribution the `SessionEnd` recorder
+/// and the miner's `discover.rs::project_name` apply, ported standalone, with
+/// no shelling out. In rule order:
+///  - cwd == $HOME is reserved as "home" (a dotfiles checkout in ~ must
+///    not resurrect the username as a project name);
+///  - a relative cwd (legacy grok session roots) is taken as-is, no walk;
+///  - the closed ephemeral realms (/tmp, /var/tmp, $TMPDIR, ~/.grok,
+///    ~/.cache) map to the literal "ephemeral", decided BEFORE the walk so
+///    a degraded floor can never escape into a repo outside the realm;
+///  - otherwise the nearest enclosing repo wins: a `.git` directory is a
+///    repo (a nested repo never folds into an outer one); a `.git` FILE
+///    folds into its repo only when the gitdir pointer has the linked-
+///    worktree shape (`.../.git/worktrees/<name>`), a submodule pointer
+///    keeps its own basename; the walk stops unexamined at $HOME for
+///    paths under it, at / elsewhere, and falls back to the cwd's
+///    basename. One deliberate tension mirrored from the miner: a live
+///    worktree under ~/.grok/worktrees lands in "ephemeral", not its
+///    parent repo; fold-then-escape is the failure the rule order
+///    exists to kill, and the row's cwd keeps offline re-attribution possible.
 #[must_use]
 pub fn project_of(cwd: &Path) -> String {
-    cwd.file_name()
-        .map_or_else(|| "unknown".into(), |n| n.to_string_lossy().into_owned())
+    project_of_in(
+        cwd,
+        home::home_dir().as_deref(),
+        std::env::var("TMPDIR").ok().as_deref(),
+    )
+}
+
+pub(crate) fn project_of_in(cwd: &Path, home: Option<&Path>, tmpdir: Option<&str>) -> String {
+    if home == Some(cwd) {
+        return "home".to_string();
+    }
+    if !cwd.is_absolute() {
+        return basename_or_unknown(cwd);
+    }
+    if is_ephemeral(cwd, home, tmpdir) {
+        return "ephemeral".to_string();
+    }
+    let floor: &Path = match home {
+        Some(h) if cwd.starts_with(h) => h,
+        _ => Path::new("/"),
+    };
+    let mut cur = Some(cwd);
+    while let Some(d) = cur {
+        if d == floor {
+            break;
+        }
+        let dotgit = d.join(".git");
+        if dotgit.is_dir() {
+            // Dotfiles-home guard: when $HOME resolves elsewhere (scratch
+            // home) the walk can land on the real ~/.git checkout; if the
+            // cwd lives in that repo's .grok/.cache, the realm wins.
+            for dot in [".grok", ".cache"] {
+                let realm = d.join(dot);
+                if cwd.starts_with(&realm) && realm.is_dir() {
+                    return "ephemeral".to_string();
+                }
+            }
+            return basename_or_unknown(d);
+        }
+        if dotgit.is_file() {
+            if let Some(name) = std::fs::read_to_string(&dotgit).ok().and_then(|ptr| {
+                let gitdir = ptr.strip_prefix("gitdir:")?;
+                if gitdir.contains("/worktrees/") {
+                    gitdir_repo_component(gitdir)
+                } else {
+                    None
+                }
+            }) {
+                return name;
+            }
+            return basename_or_unknown(d);
+        }
+        cur = d.parent();
+    }
+    basename_or_unknown(cwd)
 }
 
 fn defect(item: &str, detail: &str, count: usize, ts: &str) -> serde_json::Value {
@@ -527,6 +660,184 @@ mod tests {
             assert_eq!(v["record_kind"], "slop_scan");
         }
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Fixture tree under /dev/shm: /tmp is an ephemeral realm and would
+    /// collapse its own fixtures into "ephemeral".
+    struct Fx {
+        root: PathBuf,
+    }
+
+    impl Fx {
+        fn new() -> Fx {
+            static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+            let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let root = PathBuf::from("/dev/shm")
+                .join(format!("agent-slop-attr-{}-{n}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&root);
+            let fx = Fx { root };
+            let mk = |p: &str| std::fs::create_dir_all(fx.root.join(p)).expect("mkdir");
+            let ptr = |p: &str, body: String| {
+                std::fs::write(fx.root.join(p).join(".git"), body).expect("pointer");
+            };
+            let r = fx.root.display();
+            mk(".git");
+            mk("main-repo/.git");
+            mk("main-repo/src/deep");
+            mk("wtree/src");
+            ptr(
+                "wtree",
+                format!("gitdir: {r}/main-repo/.git/worktrees/wtree\n"),
+            );
+            mk("outer/.git/modules/subm");
+            mk("outer/nested/.git");
+            mk("outer/nested/deep");
+            mk("subm/inner");
+            ptr("subm", format!("gitdir: {r}/outer/.git/modules/subm\n"));
+            mk("odd name/.git");
+            mk("odd name/src");
+            mk(".grok/x");
+            mk(".grok/worktrees/mine-exarch/subagent-01a1");
+            ptr(
+                ".grok/worktrees/mine-exarch/subagent-01a1",
+                format!("gitdir: {r}/main-repo/.git/worktrees/subagent-01a1\n"),
+            );
+            mk(".cache/x");
+            mk("tmpdir/s1");
+            mk("share/profiles/work-gpt4/2026-09-21-a28ccd6d");
+            ptr(
+                "share/profiles/work-gpt4/2026-09-21-a28ccd6d",
+                format!("gitdir: {r}/main-repo/.git/worktrees/2026-09-21-a28ccd6d\n"),
+            );
+            fx
+        }
+
+        fn at(&self, rel: &str) -> PathBuf {
+            if rel.is_empty() {
+                self.root.clone()
+            } else {
+                self.root.join(rel)
+            }
+        }
+
+        fn tmpdir(&self) -> String {
+            self.at("tmpdir").to_string_lossy().into_owned()
+        }
+    }
+
+    impl Drop for Fx {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    /// (cwd relative to the fixture home, expected project). Every row
+    /// differs from the old basename-of-cwd answer, so each one fails on it.
+    const ATTRIBUTION: &[(&str, &str)] = &[
+        ("", "home"),
+        ("main-repo/src/deep", "main-repo"),
+        ("wtree/src", "main-repo"),
+        ("outer/nested/deep", "nested"),
+        ("subm/inner", "subm"),
+        ("odd name/src", "unknown"),
+        (".grok/x", "ephemeral"),
+        (".grok/worktrees/mine-exarch/subagent-01a1", "ephemeral"),
+        (".cache/x", "ephemeral"),
+        ("tmpdir/s1", "ephemeral"),
+        ("share/profiles/work-gpt4/2026-09-21-a28ccd6d", "main-repo"),
+    ];
+
+    #[test]
+    fn project_attribution_follows_the_recorder_table() {
+        let fx = Fx::new();
+        let tmp = fx.tmpdir();
+        for (rel, want) in ATTRIBUTION {
+            let cwd = fx.at(rel);
+            let got = project_of_in(&cwd, Some(&fx.root), Some(&tmp));
+            assert_eq!(got, *want, "cwd {}", cwd.display());
+            let old = cwd.file_name().map(|n| n.to_string_lossy().into_owned());
+            assert_ne!(
+                old.as_deref(),
+                Some(*want),
+                "row must not pass on basename: {rel}"
+            );
+        }
+    }
+
+    #[test]
+    fn closed_realms_need_no_fixture() {
+        for cwd in ["/tmp", "/tmp/a/b", "/var/tmp/x/y"] {
+            assert_eq!(
+                project_of_in(Path::new(cwd), None, None),
+                "ephemeral",
+                "{cwd}"
+            );
+        }
+        assert_eq!(
+            project_of_in(Path::new("/srv/t/s1"), None, Some("/srv/t/")),
+            "ephemeral"
+        );
+    }
+
+    /// Runs the recorder's own naming block (the `miner-parity` markers in
+    /// the consumer's script) on the same cwds, so the two cannot drift
+    /// without this failing. The cwd == $HOME rule sits outside the
+    /// markers and is covered by the table only. The recorder belongs to
+    /// the agent-feedback consumer, so the check runs only when its path
+    /// is supplied; once requested, absence is a failure, never a skip.
+    #[test]
+    #[ignore = "agent-feedback consumer check: needs AGENT_SLOP_FEEDBACK_RECORD; run with --ignored"]
+    fn project_attribution_matches_the_shipped_recorder_block() {
+        let script = std::env::var_os("AGENT_SLOP_FEEDBACK_RECORD")
+            .map(PathBuf::from)
+            .expect("set AGENT_SLOP_FEEDBACK_RECORD to the consumer's feedback-record.sh");
+        let text = std::fs::read_to_string(&script)
+            .unwrap_or_else(|e| panic!("{}: {e}", script.display()));
+        let begin = text
+            .find("[begin miner-parity: project_name_in]")
+            .expect("begin marker");
+        let end = text
+            .find("[end miner-parity: project_name_in]")
+            .expect("end marker");
+        let block = text[begin..end]
+            .split_once('\n')
+            .expect("block body")
+            .1
+            .rsplit_once('\n')
+            .expect("block end")
+            .0
+            .to_string();
+        let program = format!(
+            "home_dir=\"${{HOME:-}}\"\n{block}\nfi\n\
+             p=\"$(basename -- \"$d\")\"\n\
+             case \"$p\" in \"\"|*[!A-Za-z0-9._-]*) p=unknown ;; esac\nprintf '%s' \"$p\"\n"
+        );
+        let fx = Fx::new();
+        let tmp = fx.tmpdir();
+        for (rel, want) in ATTRIBUTION.iter().filter(|(rel, _)| !rel.is_empty()) {
+            let cwd = fx.at(rel);
+            let out = std::process::Command::new("bash")
+                .arg("-c")
+                .arg(&program)
+                .env("cwd", &cwd)
+                .env("HOME", &fx.root)
+                .env("TMPDIR", &tmp)
+                .output()
+                .expect("bash");
+            let got = String::from_utf8_lossy(&out.stdout).into_owned();
+            assert_eq!(
+                got,
+                *want,
+                "recorder block on {}: {}",
+                cwd.display(),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            assert_eq!(
+                project_of_in(&cwd, Some(&fx.root), Some(&tmp)),
+                got,
+                "{rel}"
+            );
+        }
     }
 
     #[test]

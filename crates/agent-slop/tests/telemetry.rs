@@ -47,7 +47,10 @@ impl Scratch {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |d| d.subsec_nanos());
-        let root = std::env::temp_dir().join(format!(
+        // Not std::env::temp_dir(): /tmp is a closed ephemeral realm and
+        // would turn the scratch repo's project into "ephemeral", the
+        // same reason the miner's naming fixtures live in /dev/shm.
+        let root = PathBuf::from("/dev/shm").join(format!(
             "agent-slop-tel-{name}-{}-{nanos}",
             std::process::id()
         ));
