@@ -25,6 +25,7 @@
   - [slop/suppression-empty and slop/suppression-vacuous](./rules/suppression-meta.md)
 - [Custom rules](./custom-rules.md)
 - [Tuning built-ins](./tuning.md)
+- [Writing a plugin](./plugins.md)
 - [Suppressions](./suppressions.md)
 - [Hooks and the ratchet](./hooks-and-the-ratchet.md)
 - [Linter adapters](./linter-adapters.md)

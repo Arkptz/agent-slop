@@ -36,7 +36,8 @@ consults a model; the binary and the integrations crate own those.
   path-independent 16-hex-character fingerprint.
 - `config` — the three-tier `[slop]` configuration (built-ins, the
   user file, the repository's `.agent-hooks.toml`), resolved without
-  ever failing.
+  ever failing, plus the `[slop.tune]` adjustments and the
+  `[slop.plugins]` declarations.
 
 ## Example
 
@@ -75,6 +76,27 @@ The binary is two things:
 Everything about it is fail-open: no git, no repository, a malformed config
 tier, an expired deadline — the scan degrades, never the exit code. A gate
 that can crash a session is worse than no gate.
+
+## Extending it
+
+Three extension surfaces, all config-only until you want code:
+
+- **Custom rules** — one TOML file per rule in
+  `~/.config/agent-slop/rules/` or `<toplevel>/.agent-slop/rules/`:
+  phrase, anchored-marker, TODO-condition or regex matching, with
+  fixtures that run through the real engine (`agent-slop rules test`).
+  Namespace is `<producer>/<id>`; promotion to `error` requires the
+  strict bar (exception, note, provenanced hit and miss fixtures). See
+  [Custom rules](mdbook/guide/custom-rules.md).
+- **Tuning built-ins** — `[slop.tune.<family>]` extends or prunes a
+  family's phrase lists and adjusts its thresholds within audited ranges;
+  `self-test` fails when a tune weakens the frozen blocking rule. See
+  [Tuning built-ins](mdbook/guide/tuning.md).
+- **External plugins** — any executable speaking `agent-slop-plugin/1`
+  (JSON over stdio: `describe`, then `check`). Declared in the user tier
+  only, so a cloned repo cannot choose what executes; findings arrive as
+  `<plugin>/<rule>` with suppressions and ratcheting that behave like the
+  built-ins. See [Writing a plugin](mdbook/guide/plugins.md).
 
 ## Install
 
@@ -157,8 +179,9 @@ to configuration. Full protocol and payload details:
 
 The [user guide](mdbook/guide/introduction.md) covers the CLI reference, the
 three configuration tiers, every rule with bad/good examples, suppressions,
-the Stop gate, the built-in linter adapters, telemetry, and the optional
-Laya judge. Build it locally with `mdbook build mdbook`.
+the Stop gate, the built-in linter adapters, custom rules, tuning,
+external plugins, telemetry, and the optional Laya judge. Build it locally
+with `mdbook build mdbook`.
 
 ## Development
 
@@ -178,7 +201,8 @@ cargo rdme --check                                       # verify the README is 
 .
 ├── crates/
 │   ├── agent-slop-core/           # comment extraction, rule engine, config model
-│   ├── agent-slop-integrations/   # linter adapters, judge, telemetry
+│   ├── agent-slop-protocol/       # the plugin protocol wire types
+│   ├── agent-slop-integrations/   # linter adapters, plugin host, judge, telemetry
 │   └── agent-slop/                # the binary: scan, check, hook, ratchet
 ├── crates/agent-slop-core/rules/  # the rule corpus (one TOML per family)
 ├── mdbook/                        # the user guide (book.toml, guide/)

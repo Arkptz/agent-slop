@@ -19,7 +19,8 @@
 //!   path-independent 16-hex-character fingerprint.
 //! - `config` — the three-tier `[slop]` configuration (built-ins, the
 //!   user file, the repository's `.agent-hooks.toml`), resolved without
-//!   ever failing.
+//!   ever failing, plus the `[slop.tune]` adjustments and the
+//!   `[slop.plugins]` declarations.
 //!
 //! # Example
 //!
