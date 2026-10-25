@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 
 use agent_slop_core::config::{Mode, ResolvedConfig};
 use agent_slop_core::finding::{Finding, Severity};
-use agent_slop_core::rules::{corpus, scan_source};
+use agent_slop_core::rules::scan_source;
 
 /// Session files older than this are swept on read.
 const SESSION_TTL_SECS: u64 = 7 * 24 * 60 * 60;
@@ -208,23 +208,22 @@ fn is_binary(content: &[u8]) -> bool {
     content.iter().take(8000).any(|b| *b == 0)
 }
 
-/// Hash of the embedded rule corpus plus the package version: every cache
-/// entry is keyed by it, so a rebuild that changes a rule invalidates
-/// everything rather than serving fingerprints from the old ruleset.
-pub(crate) fn ruleset_version() -> String {
+/// Identity of everything that decides which fingerprints a scan yields:
+/// the package version, the ruleset (every embedded rule text) and the
+/// effective level of every rule id. Level changes matter because a rule
+/// that was off when an entry was cached left no fingerprints in it;
+/// serving that entry after the rule is switched on would charge inherited
+/// debt to the session as added.
+pub(crate) fn ruleset_version(cfg: &ResolvedConfig) -> String {
     let mut hasher = blake3::Hasher::new();
     hasher.update(env!("CARGO_PKG_VERSION").as_bytes());
-    for text in [
-        corpus::COMMENT_HISTORY,
-        corpus::COMMENT_META,
-        corpus::REVIEW_JARGON,
-        corpus::COMMENT_PARAPHRASE,
-        corpus::TODO_NO_CONDITION,
-        corpus::PERF_CLAIM,
-        corpus::UNSOURCED_CONSTRAINT,
-        corpus::COMMENT_LANGUAGE,
-    ] {
-        hasher.update(text.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(cfg.ruleset.hash.as_bytes());
+    for (id, level) in cfg.effective_levels() {
+        hasher.update(b"\0");
+        hasher.update(id.as_bytes());
+        hasher.update(b"=");
+        hasher.update(level.as_str().as_bytes());
     }
     hasher.finalize().to_hex()[..16].to_string()
 }
@@ -236,15 +235,14 @@ fn cache_root() -> Option<PathBuf> {
     Some(base.join("agent-slop"))
 }
 
-/// Content-addressed fingerprint cache. Keyed by ruleset version, file
-/// extension (the language decides the parse) and content hash, so an
-/// entry is valid forever — blobs are immutable and a ruleset change
-/// changes the key. `root` also holds pinned session state; tests inject
+/// Content-addressed fingerprint cache. Keyed by ruleset version (see
+/// [`ruleset_version`]), file extension (the language decides the parse)
+/// and content hash, so an entry is valid forever — blobs are immutable
+/// and a ruleset or level change changes the key. `root` also holds pinned session state; tests inject
 /// it instead of mutating `$XDG_CACHE_HOME`.
 pub(crate) struct Cache {
     root: Option<PathBuf>,
     dir: Option<PathBuf>,
-    version: String,
 }
 
 impl Cache {
@@ -263,11 +261,7 @@ impl Cache {
         if let Some(d) = &dir {
             let _ = std::fs::create_dir_all(d);
         }
-        Cache {
-            root,
-            dir,
-            version: ruleset_version(),
-        }
+        Cache { root, dir }
     }
 
     #[cfg(test)]
@@ -275,10 +269,10 @@ impl Cache {
         Cache::at(None, false)
     }
 
-    fn key(&self, path: &str, content: &str) -> String {
+    fn key(version: &str, path: &str, content: &str) -> String {
         let ext = path.rsplit_once('.').map_or("", |(_, e)| e);
         let mut hasher = blake3::Hasher::new();
-        hasher.update(self.version.as_bytes());
+        hasher.update(version.as_bytes());
         hasher.update(&[0x00]);
         hasher.update(ext.as_bytes());
         hasher.update(&[0x00]);
@@ -303,11 +297,12 @@ impl Cache {
 /// cached — the baseline side never needs positions or messages.
 fn cached_fingerprints(
     cfg: &ResolvedConfig,
+    version: &str,
     cache: &Cache,
     path: &str,
     content: &str,
 ) -> Vec<String> {
-    let key = cache.key(path, content);
+    let key = Cache::key(version, path, content);
     if let Some(hit) = cache.get(&key) {
         return hit;
     }
@@ -401,6 +396,7 @@ pub(crate) fn baseline_at(
     deadline: Option<Instant>,
 ) -> Multiset {
     let mut multiset = Multiset::new();
+    let version = ruleset_version(cfg);
     for path in paths {
         if expired(deadline) {
             break;
@@ -408,7 +404,7 @@ pub(crate) fn baseline_at(
         let Some(content) = repo.show(rev, path) else {
             continue;
         };
-        for fp in cached_fingerprints(cfg, cache, path, &content) {
+        for fp in cached_fingerprints(cfg, &version, cache, path, &content) {
             multiset.add(&fp);
         }
     }
@@ -928,10 +924,59 @@ mod tests {
     }
 
     #[test]
-    fn the_ruleset_version_changes_with_the_corpus() {
-        let v = ruleset_version();
+    fn the_ruleset_version_is_stable_and_tracks_levels() {
+        let cfg = builtin_config();
+        let v = ruleset_version(&cfg);
         assert_eq!(v.len(), 16);
-        assert_eq!(v, ruleset_version(), "stable across calls");
+        assert_eq!(v, ruleset_version(&cfg), "stable across calls");
+
+        let mut promoted = cfg.clone();
+        promoted.rules.insert(
+            "comment-meta".into(),
+            agent_slop_core::config::RuleLevel::Error,
+        );
+        assert_ne!(v, ruleset_version(&promoted), "a level change is a new key");
+
+        let mut overridden = cfg.clone();
+        overridden.overrides.insert(
+            "slop/comment-meta".into(),
+            agent_slop_core::config::RuleLevel::Off,
+        );
+        assert_ne!(v, ruleset_version(&overridden), "an override is a new key");
+    }
+
+    /// Editing any one embedded rule file must change the cache key. The
+    /// previous key hashed eight of the sixteen texts, so edits to the rest
+    /// kept serving fingerprints computed under the old rule.
+    #[test]
+    fn ruleset_version_covers_every_embedded_family() {
+        use agent_slop_core::rules::corpus::{EMBEDDED, RuleSet};
+        let cfg = builtin_config();
+        let base = ruleset_version(&cfg);
+        for (i, (family, _)) in EMBEDDED.iter().enumerate() {
+            let edited: Vec<(&str, String)> = EMBEDDED
+                .iter()
+                .enumerate()
+                .map(|(j, (f, t))| {
+                    (
+                        *f,
+                        if i == j {
+                            format!("{t}\n# edit\n")
+                        } else {
+                            (*t).to_string()
+                        },
+                    )
+                })
+                .collect();
+            let refs: Vec<(&str, &str)> = edited.iter().map(|(f, t)| (*f, t.as_str())).collect();
+            let mut changed = cfg.clone();
+            changed.ruleset = std::sync::Arc::new(RuleSet::from_sources(&refs));
+            assert_ne!(
+                ruleset_version(&changed),
+                base,
+                "editing {family} left the cache key unchanged"
+            );
+        }
     }
 
     #[test]

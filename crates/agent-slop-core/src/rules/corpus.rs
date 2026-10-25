@@ -7,6 +7,7 @@
 //! test`), but the drop path exists because the matrix promises it.
 
 use std::collections::BTreeMap;
+use std::sync::{Arc, OnceLock};
 
 use serde::Deserialize;
 
@@ -117,7 +118,7 @@ pub struct Corpus {
 }
 
 /// Family file names in corpus order (SPEC-006).
-const FILES: [(&str, &str); 16] = [
+pub const EMBEDDED: [(&str, &str); 16] = [
     ("comment-history", COMMENT_HISTORY),
     ("comment-meta", COMMENT_META),
     ("review-jargon", REVIEW_JARGON),
@@ -141,17 +142,65 @@ impl Corpus {
     /// its reason recorded.
     #[must_use]
     pub fn load() -> Corpus {
+        Corpus::from_sources(&EMBEDDED)
+    }
+
+    /// Parse `(family, toml text)` pairs; same drop semantics as [`load`].
+    ///
+    /// [`load`]: Corpus::load
+    #[must_use]
+    pub fn from_sources(sources: &[(&str, &str)]) -> Corpus {
         let mut rules = BTreeMap::new();
         let mut dropped = Vec::new();
-        for (family, text) in FILES {
+        for (family, text) in sources {
             match toml::from_str::<RuleFile>(text) {
                 Ok(rule) => {
-                    rules.insert(family.to_string(), rule);
+                    rules.insert((*family).to_string(), rule);
                 }
-                Err(err) => dropped.push((family.to_string(), err.to_string())),
+                Err(err) => dropped.push(((*family).to_string(), err.to_string())),
             }
         }
         Corpus { rules, dropped }
+    }
+}
+
+/// The parsed rules a scan runs against, with an identity hash over every
+/// source text that produced them. The hash is the rules half of the
+/// baseline cache key, so anything that changes what a scan can report
+/// must change it.
+#[derive(Debug)]
+pub struct RuleSet {
+    pub corpus: Corpus,
+    pub hash: String,
+}
+
+impl PartialEq for RuleSet {
+    fn eq(&self, other: &Self) -> bool {
+        self.hash == other.hash
+    }
+}
+
+impl RuleSet {
+    /// The embedded corpus, parsed once per process.
+    #[must_use]
+    pub fn embedded() -> Arc<RuleSet> {
+        static EMBEDDED_SET: OnceLock<Arc<RuleSet>> = OnceLock::new();
+        Arc::clone(EMBEDDED_SET.get_or_init(|| Arc::new(RuleSet::from_sources(&EMBEDDED))))
+    }
+
+    #[must_use]
+    pub fn from_sources(sources: &[(&str, &str)]) -> RuleSet {
+        let mut hasher = blake3::Hasher::new();
+        for (family, text) in sources {
+            hasher.update(family.as_bytes());
+            hasher.update(&[0x00]);
+            hasher.update(text.as_bytes());
+            hasher.update(&[0x00]);
+        }
+        RuleSet {
+            corpus: Corpus::from_sources(sources),
+            hash: hasher.finalize().to_hex().to_string(),
+        }
     }
 }
 

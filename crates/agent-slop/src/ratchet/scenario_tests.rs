@@ -337,10 +337,10 @@ fn block_mode_blocks_and_observe_mode_does_not() {
 /// The cache in the dangerous direction: a corrupted entry is SERVED
 /// verbatim — same tree, flipped verdict — which only a hit, not a
 /// recompute, can produce; and content keys the entries, so a second
-/// file gets its own. The ruleset-version half of the key is
-/// compile-time material (`ruleset_version()` reads the package version)
-/// and cannot be mutated inside one process; its stability is pinned by
-/// the unit test.
+/// file gets its own. The ruleset-version half of the key is pinned by
+/// the unit tests; the level half is what
+/// `promoting_a_rule_invalidates_the_baseline_cache` exercises in
+/// process.
 #[test]
 fn corrupted_cache_entries_are_served_and_content_keys_the_entries() {
     let s = Scratch::new("cache");
@@ -520,4 +520,52 @@ fn a_scoped_exclude_silences_that_rule_in_the_gate() {
         s.stop_with(&cfg, "sc1").blocking.is_empty(),
         "the scoped rule must not block under its scoped path"
     );
+}
+
+/// Same family as `SLOP`-style debt, but one that ships `off`: promoting
+/// it must not turn the inherited comment into "added".
+const CONTRAST: &str =
+    "# Same tag replaces the shown notification instead of stacking another one.\n";
+
+/// The baseline cache key must cover the effective rule levels. A warm
+/// entry computed while the family was off holds no fingerprint for it;
+/// serving that entry after the promotion charges inherited debt to the
+/// session and blocks the turn for slop it did not write.
+#[test]
+fn promoting_a_rule_invalidates_the_baseline_cache() {
+    let s = Scratch::new("promote");
+    s.write("a.py", &format!("{CONTRAST}x = 1\n"));
+    s.commit("base");
+    s.pin("sess");
+
+    s.write("a.py", &format!("{CONTRAST}x = 1\ny = 2\n"));
+
+    let mut off = builtin_config();
+    off.mode = Mode::Block;
+    off.rules
+        .insert("rejected-alternative".to_string(), config::RuleLevel::Off);
+    let warm = s.stop_with(&off, "sess");
+    assert!(!warm.would_block, "control: family off, nothing to block");
+    assert_eq!(
+        s.cache_entries().len(),
+        1,
+        "control: the baseline is cached"
+    );
+
+    let mut promoted = off.clone();
+    promoted
+        .rules
+        .insert("rejected-alternative".to_string(), config::RuleLevel::Error);
+    let out = s.stop_with(&promoted, "sess");
+    assert_eq!(
+        out.findings.len(),
+        1,
+        "control: the promoted rule fires on the file"
+    );
+    assert!(
+        out.added.is_empty(),
+        "inherited debt was charged to the session: {:?}",
+        out.added
+    );
+    assert!(!out.blocked, "a false Stop block");
 }

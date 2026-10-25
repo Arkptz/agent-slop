@@ -22,11 +22,13 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use serde::Deserialize;
 use serde::de::{Deserializer, MapAccess, Visitor};
 
 use crate::finding::Severity;
+use crate::rules::corpus::RuleSet;
 
 /// Every rule family v1 knows. A name outside this set in `[slop.rules]`
 /// is reported in `notes` (it looks like intent) but kept — dropping it
@@ -71,6 +73,17 @@ pub enum RuleLevel {
 }
 
 impl RuleLevel {
+    /// The spelling used in config files and CLI output.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RuleLevel::Error => "error",
+            RuleLevel::Warning => "warning",
+            RuleLevel::Hint => "hint",
+            RuleLevel::Off => "off",
+        }
+    }
+
     /// `off` is no severity at all: the rule does not fire.
     #[must_use]
     pub fn severity(self) -> Option<Severity> {
@@ -210,6 +223,8 @@ pub struct ResolvedConfig {
     pub exclude: ResolvedExclude,
     pub linters: BTreeMap<String, ResolvedLinter>,
     pub judge: JudgeSettings,
+    /// The rules a scan runs against. Compared by identity hash.
+    pub ruleset: Arc<RuleSet>,
     pub notes: Vec<ConfigNote>,
 }
 
@@ -226,6 +241,24 @@ impl ResolvedConfig {
             Some("") | None => None,
             Some(lang) => Some(lang),
         }
+    }
+
+    /// Level of every `slop/*` family plus every full-id override, in id
+    /// order. Together with the ruleset hash this is everything that
+    /// decides which findings a scan can produce.
+    #[must_use]
+    pub fn effective_levels(&self) -> BTreeMap<String, RuleLevel> {
+        let mut levels: BTreeMap<String, RuleLevel> = self
+            .rules
+            .iter()
+            .map(|(family, level)| (format!("slop/{family}"), *level))
+            .collect();
+        levels.extend(
+            self.overrides
+                .iter()
+                .map(|(id, level)| (id.clone(), *level)),
+        );
+        levels
     }
 
     /// Severity for a full rule id: `overrides` first, then the family
@@ -284,6 +317,7 @@ pub fn builtin_config() -> ResolvedConfig {
         exclude: ResolvedExclude::default(),
         linters: BTreeMap::new(),
         judge: JudgeSettings::default(),
+        ruleset: RuleSet::embedded(),
         notes: Vec::new(),
     }
 }

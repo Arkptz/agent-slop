@@ -15,7 +15,7 @@ fn elapsed_ms(started: Instant) -> u64 {
     u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
 
-use agent_slop_core::{config, finding, rules};
+use agent_slop_core::{config, finding};
 use agent_slop_integrations::{judge, telemetry};
 
 use std::collections::BTreeMap;
@@ -182,7 +182,7 @@ fn run_explain(rule_id: &str) -> ExitCode {
     match level_of(&cfg, rule_id) {
         Some(level) => {
             out(&format!("{rule_id}: {}", level_str(level)));
-            let corpus = rules::corpus::Corpus::load();
+            let corpus = &cfg.ruleset.corpus;
             if let Some(rule) = rule_id
                 .strip_prefix("slop/")
                 .and_then(|family| corpus.rules.get(family))
@@ -408,12 +408,7 @@ fn level_of(cfg: &ResolvedConfig, rule_id: &str) -> Option<RuleLevel> {
 }
 
 fn level_str(level: RuleLevel) -> &'static str {
-    match level {
-        RuleLevel::Error => "error",
-        RuleLevel::Warning => "warning",
-        RuleLevel::Hint => "hint",
-        RuleLevel::Off => "off",
-    }
+    level.as_str()
 }
 
 fn print_notes(cfg: &ResolvedConfig) {
@@ -426,7 +421,7 @@ fn print_notes(cfg: &ResolvedConfig) {
     // A family whose TOML fails to parse is dropped rather than fatal, so
     // without this line a broken rule file is a rule that silently stops
     // firing (POL-026 rule 4).
-    for (family, reason) in &rules::corpus::Corpus::load().dropped {
+    for (family, reason) in &cfg.ruleset.corpus.dropped {
         err(&format!("rule corpus: {family} dropped, {reason}"));
     }
 }

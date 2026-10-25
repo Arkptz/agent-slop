@@ -13,7 +13,7 @@ pub mod suppression;
 use crate::config::ResolvedConfig;
 use crate::finding::{Finding, Severity, Source, Suppression, fingerprint};
 use crate::lang::{self, Comment};
-use corpus::{Corpus, RuleFile};
+use corpus::RuleFile;
 
 /// Scan one already-read file. `file` is the repo-relative display path.
 /// Never fails: an unparsable source yields zero comments (tree-sitter
@@ -24,7 +24,7 @@ pub fn scan_source(cfg: &ResolvedConfig, file: &str, source: &str) -> Vec<Findin
     let Some(spec) = lang::spec_for_path(file) else {
         return Vec::new();
     };
-    let corpus = Corpus::load();
+    let corpus = &cfg.ruleset.corpus;
     let comments = lang::extract(spec, source);
     let lines: Vec<&str> = source.lines().collect();
     let mut findings = Vec::new();
