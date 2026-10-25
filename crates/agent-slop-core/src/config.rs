@@ -134,6 +134,41 @@ impl Default for ResolvedLinter {
     }
 }
 
+/// `[slop.plugins.<name>]` after merge. Only the user tier may supply a
+/// `command` or an `env_passthrough`: a cloned repository must not be able
+/// to make the binary execute anything, the same principle as
+/// `evaluates_repo_code` for linters. The repo tier may lower the plugin
+/// (`enable = false`, a lower `severity`) and pass `settings`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResolvedPlugin {
+    /// argv; empty until the user tier declares it, and a plugin with no
+    /// command is not a plugin.
+    pub command: Vec<String>,
+    pub enable: bool,
+    /// Wall-clock budget of one call.
+    pub timeout_ms: u64,
+    /// Cap for what the plugin may report; an `error` here is still capped
+    /// at `warning` unless an `overrides` entry names the rule.
+    pub severity: RuleLevel,
+    /// Opaque table handed to the plugin in the request.
+    pub settings: toml::Value,
+    /// Environment variables forwarded on top of the fixed allowlist.
+    pub env_passthrough: Vec<String>,
+}
+
+impl Default for ResolvedPlugin {
+    fn default() -> Self {
+        Self {
+            command: Vec::new(),
+            enable: true,
+            timeout_ms: 2000,
+            severity: RuleLevel::Warning,
+            settings: toml::Value::Table(toml::map::Map::new()),
+            env_passthrough: Vec::new(),
+        }
+    }
+}
+
 /// `[slop.exclude]` after merge: `paths` is the highest tier's whole list,
 /// `paths_extend` is every tier's extension concatenated lowest-first, and
 /// `scoped` is the highest tier's whole list.
@@ -224,6 +259,9 @@ pub struct ResolvedConfig {
     pub overrides: BTreeMap<String, RuleLevel>,
     pub exclude: ResolvedExclude,
     pub linters: BTreeMap<String, ResolvedLinter>,
+    /// Declared external plugins by name; only entries with a user-tier
+    /// `command` survive resolution.
+    pub plugins: BTreeMap<String, ResolvedPlugin>,
     pub judge: JudgeSettings,
     /// `[slop.custom] enable`: whether rule files from the user and repo
     /// rule directories are loaded.
@@ -349,6 +387,7 @@ pub fn builtin_config() -> ResolvedConfig {
         overrides: BTreeMap::new(),
         exclude: ResolvedExclude::default(),
         linters: BTreeMap::new(),
+        plugins: BTreeMap::new(),
         judge: JudgeSettings::default(),
         custom_enabled: true,
         tune: BTreeMap::new(),
@@ -381,6 +420,9 @@ pub fn resolve_with(
     } else {
         Vec::new()
     };
+    let mut prune_notes = Vec::new();
+    prune_plugins(&mut cfg, &custom, &mut prune_notes);
+    cfg.notes.extend(prune_notes);
     finish_ruleset(&mut cfg, custom);
     cfg
 }
@@ -478,6 +520,9 @@ pub fn load_with_rule_dirs(
     } else {
         Vec::new()
     };
+    let mut prune_notes = Vec::new();
+    prune_plugins(&mut cfg, &custom, &mut prune_notes);
+    cfg.notes.extend(prune_notes);
     finish_ruleset(&mut cfg, custom);
     notes.append(&mut cfg.notes);
     cfg.notes = notes;
@@ -548,6 +593,18 @@ struct SlopSection {
     judge: Option<RawJudge>,
     custom: Option<RawCustom>,
     tune: Option<BTreeMap<String, toml::Value>>,
+    plugins: Option<BTreeMap<String, RawPlugin>>,
+}
+
+/// `[slop.plugins.<name>]`, every key optional per tier.
+#[derive(Deserialize, Default, Clone, Debug)]
+struct RawPlugin {
+    command: Option<Vec<String>>,
+    enable: Option<bool>,
+    timeout_ms: Option<u64>,
+    severity: Option<RuleLevel>,
+    settings: Option<toml::Value>,
+    env_passthrough: Option<Vec<String>>,
 }
 
 /// `[slop.custom]`: the one switch of the custom-rule layer.
@@ -685,6 +742,11 @@ fn apply_section(
     if let Some(raw_tune) = section.tune {
         tune::merge_tier(&mut cfg.tune, raw_tune, tier, notes);
     }
+    if let Some(plugins) = section.plugins {
+        for (name, raw) in plugins {
+            apply_plugin(cfg, &name, raw, tier, notes);
+        }
+    }
     if let Some(judge) = section.judge {
         if let Some(enable) = judge.enable {
             cfg.judge.enabled = enable;
@@ -725,6 +787,118 @@ fn apply_section(
             }
         }
     }
+}
+
+/// Rank used to let the repo tier only lower a plugin's severity.
+fn level_rank(level: RuleLevel) -> u8 {
+    match level {
+        RuleLevel::Error => 3,
+        RuleLevel::Warning => 2,
+        RuleLevel::Hint => 1,
+        RuleLevel::Off => 0,
+    }
+}
+
+/// Fold one tier's `[slop.plugins.<name>]` entry. The repo tier is a
+/// restricted voice: no `command`, no `env_passthrough`, no `timeout_ms`,
+/// no `enable = true`, and a `severity` only when it is lower.
+fn apply_plugin(
+    cfg: &mut ResolvedConfig,
+    name: &str,
+    raw: RawPlugin,
+    tier: Tier,
+    notes: &mut Vec<ConfigNote>,
+) {
+    let mut note = |reason: String| notes.push(ConfigNote { tier, reason });
+    if !crate::rules::custom::valid_producer(name) || name.len() < 2 {
+        note(format!(
+            "[slop.plugins.{name}] ignored: the name must match [a-z][a-z0-9-]{{1,31}}"
+        ));
+        return;
+    }
+    if crate::rules::custom::RESERVED_PRODUCERS.contains(&name) {
+        note(format!(
+            "[slop.plugins.{name}] ignored: `{name}` is a reserved producer"
+        ));
+        return;
+    }
+    let entry = cfg.plugins.entry(name.to_string()).or_default();
+    match tier {
+        Tier::User => {
+            if let Some(command) = raw.command {
+                entry.command = command;
+            }
+            if let Some(env) = raw.env_passthrough {
+                entry.env_passthrough = env;
+            }
+            if let Some(enable) = raw.enable {
+                entry.enable = enable;
+            }
+            if let Some(timeout_ms) = raw.timeout_ms {
+                entry.timeout_ms = timeout_ms;
+            }
+            if let Some(severity) = raw.severity {
+                entry.severity = severity;
+            }
+        }
+        Tier::Repo => {
+            for (present, key) in [
+                (raw.command.is_some(), "command"),
+                (raw.env_passthrough.is_some(), "env_passthrough"),
+                (raw.timeout_ms.is_some(), "timeout_ms"),
+            ] {
+                if present {
+                    note(format!(
+                        "[slop.plugins.{name}] {key} ignored: only the user tier may set it \
+                         (a cloned repository must not choose what executes)"
+                    ));
+                }
+            }
+            match raw.enable {
+                Some(false) => entry.enable = false,
+                Some(true) => note(format!(
+                    "[slop.plugins.{name}] enable = true ignored: the repo tier may only disable"
+                )),
+                None => {}
+            }
+            if let Some(severity) = raw.severity {
+                if level_rank(severity) <= level_rank(entry.severity) {
+                    entry.severity = severity;
+                } else {
+                    note(format!(
+                        "[slop.plugins.{name}] severity ignored: the repo tier may only lower it"
+                    ));
+                }
+            }
+        }
+    }
+    if let Some(settings) = raw.settings {
+        entry.settings = settings;
+    }
+}
+
+/// Drop plugin entries that are not plugins: no user-tier command, or a
+/// name that collides with a loaded custom rule's producer (the two share
+/// the `<producer>/<id>` namespace).
+fn prune_plugins(cfg: &mut ResolvedConfig, custom: &[LoadedRule], notes: &mut Vec<ConfigNote>) {
+    cfg.plugins.retain(|name, plugin| {
+        if plugin.command.is_empty() {
+            return false;
+        }
+        if custom
+            .iter()
+            .any(|c| c.id.split('/').next() == Some(name.as_str()))
+        {
+            notes.push(ConfigNote {
+                tier: Tier::User,
+                reason: format!(
+                    "[slop.plugins.{name}] dropped: a custom rule already uses producer `{name}`"
+                ),
+            });
+            return false;
+        }
+        true
+    });
 }
 
 /// Read one tier's file. `None` path or `NotFound` file → tier absent, no

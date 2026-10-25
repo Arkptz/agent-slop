@@ -358,7 +358,7 @@ fn evaluate_rule(
 /// Line-scoped suppression: the same line, or the previous non-empty line
 /// when a standalone allow line precedes this comment. A suppressed
 /// finding is carried with its `Suppression`, never dropped.
-fn apply_suppression(finding: &mut Finding, lines: &[&str]) {
+pub fn apply_suppression(finding: &mut Finding, lines: &[&str]) {
     let target = finding.line as usize; // 1-based
     let candidates = [
         lines.get(target.wrapping_sub(1)).copied(),

@@ -22,6 +22,7 @@ agent-slop scan [PATHS...]
     --fail-on error|warning|hint|never  default never
     --rules <glob,...> / --no-rules <glob,...>
     --linters auto|none|<name,...>      default auto (cost class A+B only)
+    --plugins auto|none|<name,...>      default auto (external plugins, [slop.plugins])
     --comment-lang en|ru|auto
     --strict-suppressions
     --no-cache / --deadline-ms <n>
@@ -88,6 +89,8 @@ pub(crate) struct ScanArgs {
     pub no_rules: Option<Vec<String>>,
     /// `auto|none|<name,...>`; `None` means `auto`.
     pub linters: Option<String>,
+    /// `auto|none|<name,...>`; `None` means `auto` (external plugins).
+    pub plugins: Option<String>,
     /// `en|ru|auto`; `None` leaves the config's `language` standing.
     pub comment_lang: Option<String>,
     pub strict_suppressions: bool,
@@ -106,7 +109,7 @@ pub(crate) struct ScanArgs {
 pub(crate) enum Cli {
     /// `scan`, and also the bare invocation: no subcommand is a scan of
     /// the whole repo, the common human-shell case.
-    Scan(ScanArgs),
+    Scan(Box<ScanArgs>),
     Check {
         files: Vec<String>,
     },
@@ -140,10 +143,10 @@ pub(crate) enum Cli {
 pub(crate) fn parse() -> Cli {
     let mut args = std::env::args().skip(1);
     let Some(cmd) = args.next() else {
-        return Cli::Scan(ScanArgs::default());
+        return Cli::Scan(Box::default());
     };
     match cmd.as_str() {
-        "scan" => Cli::Scan(parse_scan(&mut args)),
+        "scan" => Cli::Scan(Box::new(parse_scan(&mut args))),
         "check" => Cli::Check {
             files: args.collect(),
         },
@@ -175,6 +178,7 @@ fn parse_scan(args: &mut impl Iterator<Item = String>) -> ScanArgs {
             "--rules" => o.rules = Some(comma_list(&value(args, "--rules"))),
             "--no-rules" => o.no_rules = Some(comma_list(&value(args, "--no-rules"))),
             "--linters" => o.linters = Some(value(args, "--linters")),
+            "--plugins" => o.plugins = Some(value(args, "--plugins")),
             "--comment-lang" => {
                 o.comment_lang = Some(parse_comment_lang(&value(args, "--comment-lang")));
             }

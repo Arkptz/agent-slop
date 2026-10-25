@@ -24,7 +24,14 @@ pub enum Severity {
 #[serde(rename_all = "lowercase")]
 pub enum Source {
     Slop,
-    Linter { tool: String },
+    Linter {
+        tool: String,
+    },
+    /// A finding imported from an external plugin process; `tool` is the
+    /// plugin name from the manifest.
+    Plugin {
+        tool: String,
+    },
 }
 
 /// `valid` is decided by the suppression parser (SPEC-006 "Suppression");

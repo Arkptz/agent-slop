@@ -35,6 +35,8 @@ name = "agent-slop-integrations"
 version = "1.0.0"
 dependencies = [
  "agent-slop-core",
+ "agent-slop-protocol",
+ "blake3",
  "home",
  "serde",
  "serde_json",

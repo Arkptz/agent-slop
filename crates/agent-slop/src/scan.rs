@@ -173,6 +173,72 @@ fn run_linters(
     (findings, skipped_tools, status)
 }
 
+/// What reading and rule-scanning the target files produced.
+struct Walked {
+    findings: Vec<Finding>,
+    skipped_paths: Vec<SkippedPath>,
+    truncated: bool,
+    files_scanned: usize,
+    /// Content per target, `None` where the path contributed nothing; the
+    /// plugin host reads the same bytes the rules did.
+    contents: Vec<Option<String>>,
+}
+
+fn walk(
+    cfg: &ResolvedConfig,
+    root: &Path,
+    targets: &[PathBuf],
+    deadline: Option<Instant>,
+) -> Walked {
+    let mut findings = Vec::new();
+    let mut skipped_paths = Vec::new();
+    let mut truncated = false;
+    let mut files_scanned = 0usize;
+    let mut contents: Vec<Option<String>> = Vec::new();
+
+    for path in targets {
+        if deadline.is_some_and(|d| Instant::now() >= d) {
+            truncated = true;
+            break;
+        }
+        let rel = relative(root, path);
+        let skip = |reason: &'static str| SkippedPath {
+            path: rel.clone(),
+            reason,
+        };
+        if excluded(cfg, &rel) {
+            skipped_paths.push(skip("excluded"));
+            contents.push(None);
+            continue;
+        }
+        let Ok(bytes) = std::fs::read(path) else {
+            skipped_paths.push(skip("unreadable"));
+            contents.push(None);
+            continue;
+        };
+        if is_binary(&bytes) {
+            skipped_paths.push(skip("binary"));
+            contents.push(None);
+            continue;
+        }
+        let content = String::from_utf8_lossy(&bytes);
+        contents.push(Some(content.clone().into_owned()));
+        files_scanned += 1;
+        findings.extend(
+            scan_source(cfg, &rel, &content)
+                .into_iter()
+                .filter(|f| !scoped_out(cfg, &f.file, &f.rule)),
+        );
+    }
+    Walked {
+        findings,
+        skipped_paths,
+        truncated,
+        files_scanned,
+        contents,
+    }
+}
+
 pub(crate) fn run(cfg: &ResolvedConfig, args: &ScanArgs, cwd: &Path, git: bool) -> Report {
     let deadline = args
         .deadline_ms
@@ -200,69 +266,59 @@ pub(crate) fn run(cfg: &ResolvedConfig, args: &ScanArgs, cwd: &Path, git: bool) 
         targets.retain(|t| changed.contains(t));
     }
 
-    let mut findings = Vec::new();
-    let mut skipped_paths = Vec::new();
-    let mut truncated = false;
-    let mut files_scanned = 0usize;
-
-    for path in &targets {
-        if deadline.is_some_and(|d| Instant::now() >= d) {
-            truncated = true;
-            break;
-        }
-        let rel = relative(&root, path);
-        if excluded(cfg, &rel) {
-            skipped_paths.push(SkippedPath {
-                path: rel,
-                reason: "excluded",
-            });
-            continue;
-        }
-        let Ok(bytes) = std::fs::read(path) else {
-            skipped_paths.push(SkippedPath {
-                path: rel,
-                reason: "unreadable",
-            });
-            continue;
-        };
-        if is_binary(&bytes) {
-            skipped_paths.push(SkippedPath {
-                path: rel,
-                reason: "binary",
-            });
-            continue;
-        }
-        let content = String::from_utf8_lossy(&bytes);
-        files_scanned += 1;
-        findings.extend(
-            scan_source(cfg, &rel, &content)
-                .into_iter()
-                .filter(|f| !scoped_out(cfg, &f.file, &f.rule)),
-        );
-    }
+    let Walked {
+        mut findings,
+        skipped_paths,
+        truncated,
+        files_scanned,
+        contents,
+    } = walk(cfg, &root, &targets, deadline);
 
     let rel_targets: Vec<String> = targets.iter().map(|p| relative(&root, p)).collect();
-    let (linter_findings, skipped_tools, linter_status) =
+    let (linter_findings, mut skipped_tools, mut linter_status) =
         run_linters(cfg, args, &root, &rel_targets);
     findings.extend(linter_findings);
+
+    let left_ms = deadline.map(|d| {
+        u64::try_from(d.saturating_duration_since(Instant::now()).as_millis()).unwrap_or(0)
+    });
+    let contents_named: Vec<(String, String)> = targets
+        .iter()
+        .zip(&contents)
+        .filter_map(|(p, c)| c.clone().map(|text| (relative(&root, p), text)))
+        .collect();
+    let plugins = run_plugins(
+        cfg,
+        args.plugins.as_deref(),
+        &PluginCtx {
+            root: &root,
+            repo: repo.as_ref(),
+            base: base.as_deref(),
+            left_ms,
+        },
+        &contents_named,
+    );
+    findings.extend(plugins.findings.iter().cloned());
+    skipped_tools.extend(plugins.skipped.iter().map(|s| linters::Skipped {
+        tool: s.tool.clone(),
+        reason: s.reason.clone(),
+    }));
+    for (tool, status) in &plugins.status {
+        linter_status.insert(tool.clone(), status.clone());
+    }
 
     findings.retain(|f| rule_selected(args, &f.rule) && severity_kept(args.severity, f.severity));
     findings.sort_by(|a, b| (&a.file, a.line, &a.rule).cmp(&(&b.file, b.line, &b.rule)));
 
-    // The ratchet only has meaning against a ref: without one every
-    // finding is simply reported.
-    let added = match (&repo, &base) {
-        (Some(repo), Some(base)) => {
-            let cache = Cache::open(!args.no_cache);
-            let paths: Vec<String> = findings.iter().map(|f| f.file.clone()).collect();
-            let baseline = ratchet::baseline_at(cfg, repo, base, &paths, &cache, deadline);
-            ratchet::added(&findings, &baseline)
-                .into_iter()
-                .map(|f| f.fingerprint)
-                .collect()
-        }
-        _ => Vec::new(),
-    };
+    let added = added_of(
+        cfg,
+        repo.as_ref(),
+        base.as_deref(),
+        args.no_cache,
+        &findings,
+        deadline,
+        &plugins,
+    );
 
     Report {
         findings,
@@ -273,6 +329,100 @@ pub(crate) fn run(cfg: &ResolvedConfig, args: &ScanArgs, cwd: &Path, git: bool) 
         files_scanned,
         linters: linter_status,
     }
+}
+
+/// The plugin host over the scan's named files. `--plugins` mirrors
+/// `--linters`; the stage is always `Scan` here — the Stop gate never runs
+/// plugins. Under `--since`, a deterministic comment plugin also runs over
+/// the changed files as they were at the base, so its inherited findings
+/// sit in the baseline instead of counting as added (D3's spirit).
+fn run_plugins(
+    cfg: &ResolvedConfig,
+    plugins_arg: Option<&str>,
+    ctx: &PluginCtx<'_>,
+    contents: &[(String, String)],
+) -> agent_slop_integrations::plugins::PluginRun {
+    use agent_slop_integrations::plugins::{DescribeCache, Opts, Selection, Stage, run};
+    let selection = plugins_arg.map_or(Selection::Auto, Selection::parse);
+    let cache = DescribeCache::from_env();
+    let mut plugins = run(
+        cfg,
+        &Opts {
+            selection: &selection,
+            stage: Stage::Scan,
+            left_ms: ctx.left_ms,
+        },
+        ctx.root,
+        contents,
+        &cache,
+    );
+    if let (Some(repo), Some(base)) = (ctx.repo, ctx.base)
+        && !plugins.attributable.is_empty()
+    {
+        let blobs: Vec<(String, String)> = contents
+            .iter()
+            .filter_map(|(p, _)| repo.show(base, p).map(|c| (p.clone(), c)))
+            .collect();
+        let narrow = Selection::Named(plugins.attributable.iter().cloned().collect());
+        plugins.baseline = run(
+            cfg,
+            &Opts {
+                selection: &narrow,
+                stage: Stage::Scan,
+                left_ms: ctx.left_ms,
+            },
+            ctx.root,
+            &blobs,
+            &cache,
+        )
+        .findings;
+    }
+    plugins
+}
+
+/// What the plugin pass needs to know about where the scan runs.
+struct PluginCtx<'a> {
+    root: &'a Path,
+    repo: Option<&'a Repo>,
+    base: Option<&'a str>,
+    left_ms: Option<u64>,
+}
+
+/// The ratchet: multiset difference against the baseline, with the
+/// baseline pass's plugin findings folded in. Findings from plugins that
+/// cannot be attributed (file input, non-deterministic) are never counted
+/// as added — unattributable debt never blocks (SPEC-006 rule 3's spirit).
+fn added_of(
+    cfg: &ResolvedConfig,
+    repo: Option<&Repo>,
+    base: Option<&str>,
+    no_cache: bool,
+    findings: &[Finding],
+    deadline: Option<Instant>,
+    plugins: &agent_slop_integrations::plugins::PluginRun,
+) -> Vec<String> {
+    let (Some(repo), Some(base)) = (repo, base) else {
+        return Vec::new();
+    };
+    let attributable = |f: &Finding| match &f.source {
+        agent_slop_core::finding::Source::Plugin { tool } => plugins.attributable.contains(tool),
+        _ => true,
+    };
+    let cache = Cache::open(!no_cache);
+    let paths: Vec<String> = findings.iter().map(|f| f.file.clone()).collect();
+    let mut baseline = ratchet::baseline_at(cfg, repo, base, &paths, &cache, deadline);
+    for f in &plugins.baseline {
+        baseline.add(&f.fingerprint);
+    }
+    let current: Vec<Finding> = findings
+        .iter()
+        .filter(|f| attributable(f))
+        .cloned()
+        .collect();
+    ratchet::added(&current, &baseline)
+        .into_iter()
+        .map(|f| f.fingerprint)
+        .collect()
 }
 
 /// The stdout contract. `judged` is positionally aligned with

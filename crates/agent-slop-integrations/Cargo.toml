@@ -13,6 +13,8 @@ categories.workspace = true
 
 [dependencies]
 agent-slop-core.workspace = true
+agent-slop-protocol.workspace = true
+blake3.workspace = true
 home.workspace = true
 serde.workspace = true
 serde_json.workspace = true
