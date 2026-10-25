@@ -19,6 +19,7 @@ categories = ["development-tools", "command-line-utilities"]
 [workspace.dependencies]
 agent-slop-core = { path = "crates/agent-slop-core", version = "=1.0.0" }
 agent-slop-integrations = { path = "crates/agent-slop-integrations", version = "=1.0.0" }
+agent-slop-protocol = { path = "crates/agent-slop-protocol", version = "1" }
 # The ast-grep API changes between minor releases; bumps are deliberate.
 ast-grep-core = "=0.45.3"
 ast-grep-language = "=0.45.3"

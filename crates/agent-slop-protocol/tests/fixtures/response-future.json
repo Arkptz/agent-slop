@@ -1,0 +1,6 @@
+{
+  "protocol": 2,
+  "findings": [],
+  "diagnostics": [],
+  "telemetry": { "added_in": "a later protocol" }
+}

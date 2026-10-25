@@ -1,0 +1,19 @@
+[package]
+name = "agent-slop-protocol"
+description = "Wire types of the agent-slop-plugin/1 protocol between agent-slop and its external plugins"
+readme = "README.md"
+version = "1.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords = ["lint", "plugin", "protocol", "agent-slop", "json"]
+categories = ["development-tools", "encoding"]
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

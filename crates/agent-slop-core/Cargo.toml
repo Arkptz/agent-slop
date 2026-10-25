@@ -1,6 +1,7 @@
 [package]
 name = "agent-slop-core"
 description = "Comment extraction, rule engine and configuration model for agent-slop"
+readme = "../../README.md"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

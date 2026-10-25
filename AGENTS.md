@@ -22,7 +22,10 @@ cargo deny check                     # licenses + advisories + bans
 - Cargo workspace: member crates live under `crates/*`.
 - `crates/agent-slop-core` — comment extraction, rule engine, config model and
   the rule corpus; `crates/agent-slop-integrations` — linter adapters, judge
-  transport, telemetry; `crates/agent-slop` — the binary (CLI, hook, ratchet).
+  transport, telemetry; `crates/agent-slop-protocol` — the serde wire types of
+  the plugin protocol; `crates/agent-slop` — the binary (CLI, hook, ratchet).
+  Every crate is published to crates.io; check with
+  `cargo publish --workspace --dry-run --allow-dirty`.
 - Shared metadata, dependency versions, and lints are defined once in the root
   `Cargo.toml` (`[workspace.package]`, `[workspace.dependencies]`,
   `[workspace.lints]`) and inherited per crate with `*.workspace = true`.

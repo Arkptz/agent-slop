@@ -1,0 +1,18 @@
+{
+  "protocol": 1,
+  "name": "acme",
+  "version": "0.3.1",
+  "input": "comments",
+  "cost": "A",
+  "langs": ["python"],
+  "exts": [],
+  "deterministic": true,
+  "rules": [
+    {
+      "id": "vague-why",
+      "default_level": "warning",
+      "note": "State the constraint the code works around instead of saying it is needed.",
+      "exception": "The comment names the product, bug or version that forces it."
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "protocol": 1,
+  "stage": "scan",
+  "repo_root": "/work/repo",
+  "deadline_ms": 1850,
+  "settings": { "lang": "en" },
+  "files": [
+    {
+      "path": "src/a.py",
+      "lang": "python",
+      "comments": [
+        {
+          "index": 0,
+          "text": "# needed for reasons",
+          "line": 3,
+          "col": 1,
+          "end_line": 3,
+          "next_code_ids": ["x"],
+          "is_docstring": false
+        }
+      ]
+    }
+  ]
+}

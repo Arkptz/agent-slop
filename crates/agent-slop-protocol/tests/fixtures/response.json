@@ -1,0 +1,24 @@
+{
+  "protocol": 1,
+  "findings": [
+    {
+      "rule": "vague-why",
+      "path": "src/a.py",
+      "comment": 0,
+      "message": "the comment asserts a need without naming it",
+      "upstream_severity": "style",
+      "fixable": false
+    },
+    {
+      "rule": "vague-why",
+      "path": "src/b.txt",
+      "line": 7,
+      "col": 3,
+      "end_line": 7,
+      "message": "same shape in a file-input plugin",
+      "snippet": "needed for reasons",
+      "fixable": false
+    }
+  ],
+  "diagnostics": ["2 files checked"]
+}

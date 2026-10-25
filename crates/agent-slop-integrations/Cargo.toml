@@ -1,6 +1,7 @@
 [package]
 name = "agent-slop-integrations"
 description = "Linter adapters, judge transport and telemetry for agent-slop"
+readme = "../../README.md"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
