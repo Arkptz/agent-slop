@@ -454,3 +454,79 @@ esac
         "never added: {v}"
     );
 }
+
+/// Q3 (owner decision 2026-10-25): plugins run in `PostToolUse`, advisory
+/// only — advice on stdout at exit 0, failures as a stderr note.
+/// The hook entry with a real payload: advice reaches stdout's
+/// additionalContext, the exit stays 0, and a broken plugin only notes on
+/// stderr.
+#[test]
+fn posttooluse_payload_carries_plugin_advice_and_survives_failures() {
+    let s = Scratch::new("hook-payload");
+    s.write_plugin("acme-slop", PLUGIN);
+    s.write_plugin("slow-slop", TIMEOUT_PLUGIN);
+    s.user_config(
+        "[slop.plugins.acme]\ncommand = [\"acme-slop\"]\n\n[slop.plugins.slow]\ncommand = [\"slow-slop\"]\ntimeout_ms = 200\n",
+    );
+    s.write("a.py", "# murky reasons here\nx = 1\n");
+    let payload = r#"{"hook_event_name":"PostToolUse","tool_name":"Write","tool_input":{"file_path":"a.py"},"session_id":"s1"}"#;
+    let (code, out, err) = run_hook(&s, payload);
+    assert_eq!(code, 0, "{out} {err}");
+    assert!(out.contains("additionalContext"), "{out}");
+    assert!(
+        out.contains("acme/vague-why"),
+        "plugin advice on stdout: {out}"
+    );
+    assert!(
+        err.contains("plugin slow skipped: timeout"),
+        "the slow plugin's failure is a stderr note: {err}"
+    );
+
+    // A clean file: no advice even though the plugin layer is on.
+    s.write("clean.py", "x = 1\n");
+    let payload = r#"{"hook_event_name":"PostToolUse","tool_name":"Write","tool_input":{"file_path":"clean.py"},"session_id":"s1"}"#;
+    let (code, out, err) = run_hook(&s, payload);
+    assert_eq!(code, 0);
+    assert!(out.is_empty(), "{out}");
+    assert!(
+        err.contains("plugin slow skipped: timeout"),
+        "the skip note still surfaces: {err}"
+    );
+}
+
+fn run_hook(s: &Scratch, payload: &str) -> (i32, String, String) {
+    use std::io::Write;
+    use std::process::Stdio;
+    let mut child = Command::new(env!("CARGO_BIN_EXE_agent-slop"))
+        .arg("hook")
+        .current_dir(&s.repo)
+        .env("HOME", &s.home)
+        .env("XDG_CACHE_HOME", s.root.join("cache"))
+        .env(
+            "PATH",
+            format!(
+                "{}:{}",
+                s.bin.display(),
+                std::env::var("PATH").unwrap_or_default()
+            ),
+        )
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn agent-slop hook");
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin")
+        .write_all(payload.as_bytes())
+        .expect("write payload");
+    let out = child.wait_with_output().expect("hook run");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}

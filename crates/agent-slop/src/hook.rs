@@ -236,11 +236,21 @@ fn post_tool_use(cfg: &ResolvedConfig, payload: &HookPayload, cwd: &std::path::P
     let Ok(content) = std::fs::read_to_string(&full) else {
         return Outcome::allow();
     };
-    let all = scan_source(cfg, rel, &content);
+    let mut all = scan_source(cfg, rel, &content);
+    // Plugins are advisory here: cost A only, a 300 ms ceiling, and a
+    // failure is a stderr note and a telemetry status, never advice and
+    // never an exit code. The Stop gate does not run them.
+    let plugins = hook_plugins(cfg, cwd, rel, &content, deadline(cfg));
+    all.extend(plugins.findings);
     let findings: Vec<Finding> = all
         .iter()
         .filter(|f| f.suppression.is_none())
         .cloned()
+        .collect();
+    let plugin_notes: Vec<String> = plugins
+        .skipped
+        .iter()
+        .map(|s| format!("agent-slop: plugin {} skipped: {}", s.tool, s.reason))
         .collect();
 
     // Every scanned file produces a row, findings or not: POL-026 rule 4
@@ -264,12 +274,13 @@ fn post_tool_use(cfg: &ResolvedConfig, payload: &HookPayload, cwd: &std::path::P
         would_block: false,
         files_scanned: 1,
         duration_ms: elapsed_ms(started),
-        linters: BTreeMap::new(),
+        linters: plugins.status,
     });
 
     if findings.is_empty() && !cfg.judge.enabled {
         return Outcome {
             row: Some(row),
+            stderr: plugin_notes,
             ..Outcome::allow()
         };
     }
@@ -305,6 +316,7 @@ fn post_tool_use(cfg: &ResolvedConfig, payload: &HookPayload, cwd: &std::path::P
     if lines.is_empty() {
         return Outcome {
             row: Some(row),
+            stderr: plugin_notes,
             ..Outcome::allow()
         };
     }
@@ -318,9 +330,45 @@ fn post_tool_use(cfg: &ResolvedConfig, payload: &HookPayload, cwd: &std::path::P
     Outcome {
         code: 0,
         stdout: vec![envelope.to_string()],
-        stderr: Vec::new(),
+        stderr: plugin_notes,
         row: Some(row),
     }
+}
+
+/// External plugins for the file the agent just wrote. Hook stage: cost A
+/// only and a hard 300 ms ceiling on top of `timeout_ms` and the leg's
+/// own deadline, so a slow plugin costs its annotation, never the turn.
+fn hook_plugins(
+    cfg: &ResolvedConfig,
+    cwd: &std::path::Path,
+    rel: &str,
+    content: &str,
+    leg_deadline: Option<Instant>,
+) -> agent_slop_integrations::plugins::PluginRun {
+    use agent_slop_integrations::plugins::{DescribeCache, Opts, Selection, Stage, run};
+    if cfg.plugins.is_empty() {
+        return agent_slop_integrations::plugins::PluginRun::default();
+    }
+    let root = Repo::discover(cwd).map_or_else(|| cwd.to_path_buf(), |r| r.root);
+    let left_ms = leg_deadline.map(|d| {
+        u64::try_from(d.saturating_duration_since(Instant::now()).as_millis()).unwrap_or(0)
+    });
+    // The path as the plugin sees it is repo-relative; the hook payload may
+    // hand an absolute one.
+    let named = std::path::Path::new(rel)
+        .strip_prefix(&root)
+        .map_or_else(|_| rel.to_string(), |p| p.to_string_lossy().into_owned());
+    run(
+        cfg,
+        &Opts {
+            selection: &Selection::Auto,
+            stage: Stage::Hook,
+            left_ms,
+        },
+        &root,
+        &[(named, content.to_string())],
+        &DescribeCache::from_env(),
+    )
 }
 
 /// The `needs_comment` half of the second verdict, for the file the agent
