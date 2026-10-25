@@ -91,7 +91,10 @@ mod tests {
 
     #[test]
     fn clean_output_is_an_empty_array() {
-        assert!(parse(&fixture("ruff-clean.json")).is_empty());
+        assert_eq!(
+            parse(&fixture("ruff-clean.json")),
+            [] as [crate::linters::RawFinding; 0]
+        );
     }
 
     #[test]
@@ -118,6 +121,9 @@ mod tests {
 
     #[test]
     fn garbage_output_yields_nothing_rather_than_failing() {
-        assert!(parse("not json at all").is_empty());
+        assert_eq!(
+            parse("not json at all"),
+            [] as [crate::linters::RawFinding; 0]
+        );
     }
 }

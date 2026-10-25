@@ -676,7 +676,7 @@ mod tests {
     fn an_empty_payload_allows() {
         let o = dispatch("{}", &cwd());
         assert_eq!(o.code, 0);
-        assert!(o.stdout.is_empty());
+        assert_eq!(o.stdout, [] as [std::string::String; 0]);
     }
 
     #[test]
@@ -721,7 +721,7 @@ mod tests {
             &cwd(),
         );
         assert_eq!(o.code, 0);
-        assert!(o.stdout.is_empty());
+        assert_eq!(o.stdout, [] as [std::string::String; 0]);
     }
 
     #[test]
@@ -761,7 +761,7 @@ mod tests {
             &dir,
         );
         let _ = std::fs::remove_dir_all(&dir);
-        assert!(o.stdout.is_empty());
+        assert_eq!(o.stdout, [] as [std::string::String; 0]);
     }
 
     #[test]

@@ -988,7 +988,7 @@ mod tests {
         assert!(cfg.overrides.is_empty());
         assert_eq!(cfg.exclude, ResolvedExclude::default());
         assert!(cfg.linters.is_empty());
-        assert!(cfg.notes.is_empty());
+        assert_eq!(cfg.notes, [] as [crate::config::ConfigNote; 0]);
 
         // Silencing is total: no finding, no advice, no gate entry.
         assert_eq!(RuleLevel::Off.severity(), None);
@@ -1108,7 +1108,7 @@ select = ["ERA001"]
             Some("[slop.exclude]\npaths = [\"a\"]\n"),
             Some("[slop.exclude]\npaths = []\n"),
         );
-        assert!(cfg.exclude.paths.is_empty());
+        assert_eq!(cfg.exclude.paths, [] as [std::string::String; 0]);
     }
 
     /// A broken repo tier degrades to the user tier; a broken user tier

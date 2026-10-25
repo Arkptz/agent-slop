@@ -85,7 +85,13 @@ mod tests {
     #[test]
     fn garbage_output_yields_nothing_rather_than_failing() {
         // tsc's trailing summary lines and blank lines match no shape.
-        assert!(parse("Found 3 errors in 2 files.\n\n").is_empty());
-        assert!(parse("no parentheses here").is_empty());
+        assert_eq!(
+            parse("Found 3 errors in 2 files.\n\n"),
+            [] as [crate::linters::RawFinding; 0]
+        );
+        assert_eq!(
+            parse("no parentheses here"),
+            [] as [crate::linters::RawFinding; 0]
+        );
     }
 }

@@ -42,7 +42,6 @@ cargo deny check                     # licenses + advisories + bans
 ## Agent setup in this project
 
 - `CLAUDE.md` re-exports `AGENTS.md` (`@AGENTS.md`) so Claude Code auto-loads these conventions. Per-agent permissions/MCP are the developer's own setup, not shipped with this template.
-- Code-structure questions use `graphify update <path>` (AST, free) to build `graphify-out/graph.json` + the graphify MCP. `graphify-out/` is a regenerable local build artifact — gitignored, never committed.
 - `dg` (DecisionGraph) governs decisions/docs — see below.
 
 ---

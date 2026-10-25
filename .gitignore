@@ -17,12 +17,6 @@ result-*
 .claude/settings.local.json
 .mcp.json.local
 
-# ── graphify (codebase knowledge graph) ───────────────────────────────────
-# Knowledge graph is a regenerable local build artifact — never tracked in git.
-# Rebuild with `graphify update <path>` (AST, free) or `graphify-semantic <path>`
-# (paid LLM). See .graphifyignore for scan-exclusion of secrets/vendor.
-graphify-out/
-
 # ── dg (DecisionGraph) ────────────────────────────────────────────────────
 .dg/.cache.json
 .dg/site/

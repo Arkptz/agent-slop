@@ -736,7 +736,7 @@ mod tests {
         // Naive `--since HEAD` sees nothing: the commit moved HEAD onto the
         // slop, which is exactly the hole being closed.
         let repo = s.repo();
-        assert!(repo.changed_files("HEAD").is_empty());
+        assert_eq!(repo.changed_files("HEAD"), [] as [std::string::String; 0]);
 
         let outcome = pinned_outcome(&s, &session);
         assert_eq!(outcome.blocking.len(), 1, "added: {:?}", outcome.added);
@@ -841,8 +841,11 @@ mod tests {
 
         std::fs::remove_file(s.dir.join("a.py")).expect("remove");
         let outcome = pinned_outcome(&s, &session);
-        assert!(outcome.added.is_empty());
-        assert!(outcome.blocking.is_empty());
+        assert_eq!(outcome.added, [] as [agent_slop_core::finding::Finding; 0]);
+        assert_eq!(
+            outcome.blocking,
+            [] as [agent_slop_core::finding::Finding; 0]
+        );
     }
 
     /// Fallback rule 3: with no pinned state, untracked findings are

@@ -151,11 +151,17 @@ mod tests {
 
     #[test]
     fn a_clean_run_prints_nothing() {
-        assert!(parse(&fixture("statix-clean.json")).is_empty());
+        assert_eq!(
+            parse(&fixture("statix-clean.json")),
+            [] as [crate::linters::RawFinding; 0]
+        );
     }
 
     #[test]
     fn garbage_output_yields_nothing_rather_than_failing() {
-        assert!(parse("not json at all").is_empty());
+        assert_eq!(
+            parse("not json at all"),
+            [] as [crate::linters::RawFinding; 0]
+        );
     }
 }

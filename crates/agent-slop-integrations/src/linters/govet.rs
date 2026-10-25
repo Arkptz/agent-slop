@@ -122,7 +122,13 @@ mod tests {
 
     #[test]
     fn garbage_output_yields_nothing_rather_than_failing() {
-        assert!(parse("not json at all").is_empty());
-        assert!(parse("{}\nnot json\n").is_empty());
+        assert_eq!(
+            parse("not json at all"),
+            [] as [crate::linters::RawFinding; 0]
+        );
+        assert_eq!(
+            parse("{}\nnot json\n"),
+            [] as [crate::linters::RawFinding; 0]
+        );
     }
 }

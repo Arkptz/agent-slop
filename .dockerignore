@@ -1,0 +1,26 @@
+# Keep the build context small and secret-free.
+target/
+**/target/
+
+.git/
+.gitignore
+.github/
+
+.direnv/
+result
+result-*
+
+.dg/
+.claude/
+.opencode/
+
+# Docs are not needed to build; README.md may be embedded via include_str!.
+*.md
+!README.md
+mdbook/
+
+compose.yaml
+Dockerfile
+.dockerignore
+.env
+.env.*

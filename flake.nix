@@ -267,7 +267,6 @@
             pkgs.typos
             pkgs.act
             pkgs.actionlint
-            # pkgs.graphifyy  # codebase knowledge graph (graphify update <path>) — enable when needed
           ];
           shellHook = ''
             ${pkgs.lefthook}/bin/lefthook install >/dev/null 2>&1 || true

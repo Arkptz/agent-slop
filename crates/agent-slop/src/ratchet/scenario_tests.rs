@@ -186,7 +186,7 @@ fn a_gitignored_file_is_skipped_entirely() {
     s.write("gen.py", SLOP);
     // The fixture must really be ignored, not merely unlisted.
     assert_eq!(s.git(&["check-ignore", "gen.py"]).trim(), "gen.py");
-    assert!(s.repo().untracked_files().is_empty());
+    assert_eq!(s.repo().untracked_files(), [] as [std::string::String; 0]);
 
     let out = s.stop("sess");
     assert!(out.findings.is_empty(), "{:?}", out.findings);

@@ -1,5 +1,6 @@
 use agent_slop_protocol::{
-    Cost, Input, Level, Manifest, PROTOCOL_VERSION, Request, Response, Stage, is_supported,
+    Cost, Input, Level, Manifest, PROTOCOL_VERSION, Request, Response, RuleDecl, Stage,
+    is_supported,
 };
 use serde_json::Value;
 
@@ -64,7 +65,7 @@ fn optional_fields_default_when_absent() {
         r#"{"protocol":1,"name":"a","version":"1","input":"files","cost":"B"}"#,
     )
     .expect("minimal manifest");
-    assert!(m.rules.is_empty());
-    assert!(m.langs.is_empty());
+    assert_eq!(m.rules, [] as [RuleDecl; 0]);
+    assert_eq!(m.langs, [] as [String; 0]);
     assert!(!m.deterministic);
 }

@@ -467,7 +467,7 @@ mod tests {
             .iter()
             .filter(|x| x.rule == "slop/comment-history")
             .collect();
-        assert!(!hist.is_empty());
+        assert_ne!(hist, [] as [&crate::finding::Finding; 0]);
         assert!(hist[0].suppression.as_ref().is_some_and(|s| !s.valid));
     }
 
@@ -496,7 +496,10 @@ mod tests {
         assert_eq!(hist[0].line, 2);
         // A string that is not the first statement is data, not a docstring.
         let data = "def f():\n    x = 1\n    \"previously cached\"\n";
-        assert!(scan_source(&cfg, "a.py", data).is_empty());
+        assert_eq!(
+            scan_source(&cfg, "a.py", data),
+            [] as [crate::finding::Finding; 0]
+        );
     }
 
     #[test]

@@ -607,7 +607,10 @@ mod tests {
         let mut a = args(&[]);
         a.no_rules = Some(vec!["slop/comment-*".to_string()]);
         let report = run(&builtin_config(), &a, &s.0, false);
-        assert!(report.findings.is_empty());
+        assert_eq!(
+            report.findings,
+            [] as [agent_slop_core::finding::Finding; 0]
+        );
     }
 
     #[test]
@@ -619,7 +622,10 @@ mod tests {
         assert!(all.findings.iter().any(|f| f.severity == Severity::Warning));
         a.severity = Some(Severity::Error);
         let errors_only = run(&builtin_config(), &a, &s.0, false);
-        assert!(errors_only.findings.is_empty());
+        assert_eq!(
+            errors_only.findings,
+            [] as [agent_slop_core::finding::Finding; 0]
+        );
     }
 
     #[test]
@@ -630,7 +636,10 @@ mod tests {
         let mut cfg = builtin_config();
         cfg.exclude.paths = vec!["vendor/**".to_string()];
         let report = run(&cfg, &args(&[]), &s.0, false);
-        assert!(report.findings.is_empty());
+        assert_eq!(
+            report.findings,
+            [] as [agent_slop_core::finding::Finding; 0]
+        );
         assert_eq!(report.skipped_paths.len(), 1);
         assert_eq!(report.skipped_paths[0].reason, "excluded");
     }
@@ -646,7 +655,10 @@ mod tests {
             rules: vec!["slop/comment-history".to_string()],
         }];
         let report = run(&cfg, &args(&[]), &s.0, false);
-        assert!(report.findings.is_empty());
+        assert_eq!(
+            report.findings,
+            [] as [agent_slop_core::finding::Finding; 0]
+        );
     }
 
     #[test]

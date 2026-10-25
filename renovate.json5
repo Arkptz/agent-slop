@@ -30,8 +30,21 @@
       matchUpdateTypes: ["minor", "patch"],
       groupName: "cargo minor and patch",
     },
+    {
+      // The cargo-chef image tag is bumped by the regex manager below (it
+      // follows rust-toolchain.toml), not by the docker manager.
+      matchDatasources: ["docker"],
+      matchPackageNames: ["lukemathwalker/cargo-chef"],
+      enabled: false,
+    },
+    {
+      // rust-toolchain.toml and the Dockerfile chef tag move in one PR.
+      matchPackageNames: ["rust-lang/rust"],
+      groupName: "rust toolchain",
+    },
   ],
-  // Track rust-toolchain.toml `channel` against the latest stable Rust release.
+  // Track rust-toolchain.toml `channel` and the Dockerfile cargo-chef tag
+  // (`latest-rust-<version>`) against the latest stable Rust release.
   // Cargo.toml `rust-version` (MSRV) is handled by the built-in cargo manager;
   // bump it alongside the channel when raising the floor.
   customManagers: [
@@ -42,6 +55,15 @@
       depNameTemplate: "rust-lang/rust",
       // github-tags is reliable for rust-lang/rust; GitHub *releases* are
       // published inconsistently, so a github-releases datasource often misses.
+      datasourceTemplate: "github-tags",
+    },
+    {
+      customType: "regex",
+      managerFilePatterns: ["/^Dockerfile$/"],
+      matchStrings: [
+        "lukemathwalker/cargo-chef:latest-rust-(?<currentValue>\\d+\\.\\d+\\.\\d+)",
+      ],
+      depNameTemplate: "rust-lang/rust",
       datasourceTemplate: "github-tags",
     },
   ],
