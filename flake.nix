@@ -95,6 +95,12 @@
                 timeout_ms = 2500;
                 rules.comment-paraphrase = "off";
               };
+              rules.no-placeholder = goodRule;
+              plugins.acme = {
+                command = ["/run/current-system/sw/bin/acme-slop" "--strict"];
+                timeout_ms = 1500;
+                settings.lang = "en";
+              };
               hooks = {
                 grok.enable = true;
                 claude.enable = true;
@@ -108,6 +114,47 @@
           }
         ];
         hmMinimal = hmEval [{programs.agent-slop.enable = true;}];
+
+        # A rule that passes `rules lint` and one that must not: the second
+        # has a hit fixture but no miss fixture, so the check below fails if
+        # the lint step stops catching that.
+        goodRule = {
+          meta = {
+            schema = 1;
+            id = "acme/no-placeholder";
+            severity = "warning";
+          };
+          match = {
+            kind = "phrase";
+            phrases = ["placeholder implementation"];
+            word_boundaries = true;
+          };
+          exception.shape = "A stub a test replaces with a fake on purpose.";
+          note.text = "Implement it, or file a TODO that names the condition for removing the stub.";
+          fixture = [
+            {
+              expect = "hit";
+              lang = "python";
+              provenance = "acme/api src/client.py:88";
+              source = "# placeholder implementation, later\nx = 1\n";
+            }
+            {
+              expect = "miss";
+              lang = "python";
+              provenance = "acme/api src/client.py:120";
+              source = "# a real implementation\nx = 1\n";
+            }
+          ];
+        };
+        brokenRule = goodRule // {fixture = [(builtins.head goodRule.fixture)];};
+        hmBroken = hmEval [
+          {
+            programs.agent-slop = {
+              enable = true;
+              rules.no-placeholder = brokenRule;
+            };
+          }
+        ];
       in {
         packages = {
           default = package;
@@ -134,6 +181,37 @@
           # Evaluates the module under home-manager's own lib and asserts on
           # the rendered files: config.toml, the grok hook source, and the
           # read-only Claude hook value (empty unless enabled).
+          # `agent-slop rules lint` over the rule files the module renders.
+          hm-rules-lint = let
+            files = hmFull.config.xdg.configFile;
+          in
+            pkgs.runCommand "agent-slop-hm-rules-lint" {} ''
+              export HOME=$TMPDIR
+              mkdir -p "$HOME/.config/agent-slop/rules"
+              cp ${files."agent-slop/rules/no-placeholder.toml".source} "$HOME/.config/agent-slop/rules/no-placeholder.toml"
+              cd "$TMPDIR"
+              ${self'.packages.default}/bin/agent-slop rules lint
+              ${self'.packages.default}/bin/agent-slop rules test
+              touch $out
+            '';
+
+          # The same lint on a deliberately broken rule must FAIL: a check
+          # that cannot fail proves nothing (POL-026).
+          hm-rules-lint-catches-a-broken-rule = let
+            files = hmBroken.config.xdg.configFile;
+          in
+            pkgs.runCommand "agent-slop-hm-rules-lint-broken" {} ''
+              export HOME=$TMPDIR
+              mkdir -p "$HOME/.config/agent-slop/rules"
+              cp ${files."agent-slop/rules/no-placeholder.toml".source} "$HOME/.config/agent-slop/rules/no-placeholder.toml"
+              cd "$TMPDIR"
+              if ${self'.packages.default}/bin/agent-slop rules lint; then
+                echo "rules lint passed a rule with no miss fixture" >&2
+                exit 1
+              fi
+              touch $out
+            '';
+
           hm-module = let
             full = hmFull.config;
             minimal = hmMinimal.config;
@@ -148,6 +226,10 @@
               assert d["mode"] == "block", d
               assert d["timeout_ms"] == 2500, d
               assert d["rules"]["comment-paraphrase"] == "off", d
+              p = d["plugins"]["acme"]
+              assert p["command"] == ["/run/current-system/sw/bin/acme-slop", "--strict"], p
+              assert p["timeout_ms"] == 1500 and p["enable"] is True, p
+              assert p["settings"] == {"lang": "en"}, p
               PY
               python3 - ${minimal.xdg.configFile."agent-slop/config.toml".source} <<'PY'
               import sys, tomllib

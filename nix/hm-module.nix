@@ -43,6 +43,27 @@ self: {
   };
   command = lib.getExe wrapper;
 
+  # One `[slop.plugins.<name>]` table. The command is an absolute store path
+  # (or the caller's explicit argv): only the user tier may declare it, and
+  # this module is the user tier.
+  pluginEntry = name: p: {
+    command =
+      if p.command != null
+      then p.command
+      else if p.package != null
+      then
+        [
+          (lib.getExe' p.package (
+            if p.bin != null
+            then p.bin
+            else name
+          ))
+        ]
+        ++ p.args
+      else throw "programs.agent-slop.plugins.${name}: set `package` or `command`";
+    inherit (p) enable timeout_ms severity settings env_passthrough;
+  };
+
   leg = timeout: {
     type = "command";
     inherit command timeout;
@@ -130,6 +151,86 @@ in {
       '';
     };
 
+    rules = lib.mkOption {
+      type = lib.types.attrsOf tomlFormat.type;
+      default = {};
+      example = lib.literalExpression ''
+        {
+          "no-placeholder" = {
+            meta = {
+              schema = 1;
+              id = "acme/no-placeholder";
+              severity = "warning";
+            };
+            match = {
+              kind = "phrase";
+              phrases = ["placeholder implementation"];
+            };
+          };
+        }
+      '';
+      description = ''
+        Custom rule files, written to
+        {file}`~/.config/agent-slop/rules/<name>.toml`. Keys are file names
+        (without the extension); values are the rule documents, validated by
+        `agent-slop rules lint` in the module check.
+      '';
+    };
+
+    plugins = lib.mkOption {
+      type = lib.types.attrsOf (lib.types.submodule {
+        options = {
+          package = lib.mkOption {
+            type = lib.types.nullOr lib.types.package;
+            default = null;
+            description = "The plugin package; its bin goes first in `command`.";
+          };
+          bin = lib.mkOption {
+            type = lib.types.nullOr lib.types.str;
+            default = null;
+            description = "Executable name inside `package` (defaults to the plugin name).";
+          };
+          command = lib.mkOption {
+            type = lib.types.nullOr (lib.types.listOf lib.types.str);
+            default = null;
+            description = "Full argv override, when the plugin needs more than one executable.";
+          };
+          args = lib.mkOption {
+            type = lib.types.listOf lib.types.str;
+            default = [];
+            description = "Arguments appended to the executable.";
+          };
+          enable = lib.mkOption {
+            type = lib.types.bool;
+            default = true;
+          };
+          timeout_ms = lib.mkOption {
+            type = lib.types.int;
+            default = 2000;
+          };
+          severity = lib.mkOption {
+            type = lib.types.enum ["error" "warning" "hint" "off"];
+            default = "warning";
+          };
+          settings = lib.mkOption {
+            type = tomlFormat.type;
+            default = {};
+          };
+          env_passthrough = lib.mkOption {
+            type = lib.types.listOf lib.types.str;
+            default = [];
+          };
+        };
+      });
+      default = {};
+      description = ''
+        External plugins, rendered into `[slop.plugins.<name>]` of
+        {file}`~/.config/agent-slop/config.toml`. Commands are absolute
+        store paths: this module owns the user tier, the only tier allowed
+        to declare them.
+      '';
+    };
+
     hooks = {
       grok.enable = lib.mkEnableOption "the agent-slop legs in grok's hook source (~/.grok/hooks/agent-slop.json)";
 
@@ -204,9 +305,22 @@ in {
     (lib.mkIf cfg.enable {
       home.packages = [cfg.package];
 
-      xdg.configFile."agent-slop/config.toml".source = tomlFormat.generate "agent-slop-config.toml" {
-        slop = {inherit (cfg) mode;} // cfg.settings;
-      };
+      xdg.configFile = lib.mkMerge (
+        [
+          {
+            "agent-slop/config.toml".source = tomlFormat.generate "agent-slop-config.toml" {
+              slop =
+                {inherit (cfg) mode;}
+                // cfg.settings
+                // lib.optionalAttrs (cfg.plugins != {}) {plugins = lib.mapAttrs pluginEntry cfg.plugins;};
+            };
+          }
+        ]
+        ++ lib.mapAttrsToList (name: rule: {
+          "agent-slop/rules/${name}.toml".source = tomlFormat.generate "agent-slop-rule-${name}.toml" rule;
+        })
+        cfg.rules
+      );
 
       home.file.".grok/hooks/agent-slop.json" = lib.mkIf cfg.hooks.grok.enable {
         source = jsonFormat.generate "agent-slop-grok-hooks.json" {hooks = grokHooks;};
