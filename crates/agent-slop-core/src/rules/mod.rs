@@ -11,6 +11,7 @@ pub mod generic;
 pub mod lex;
 pub mod paraphrase;
 pub mod suppression;
+pub mod tune;
 
 use crate::config::ResolvedConfig;
 use crate::finding::{Finding, Severity, Source, Suppression, fingerprint};

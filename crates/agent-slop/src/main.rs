@@ -472,6 +472,30 @@ fn run_self_test() -> ExitCode {
         ));
     }
 
+    // A tune that weakens a frozen blocking family (removing phrases,
+    // changing thresholds) empties the gate as surely as a demotion.
+    for id in FROZEN_BLOCKING {
+        let Some(tune) = cfg.tune.get(id.strip_prefix("slop/").unwrap_or(id)) else {
+            continue;
+        };
+        checks += 1;
+        let weakened = tune.weakening();
+        if cfg.level_of(id) == Some(RuleLevel::Error) && !weakened.is_empty() {
+            failed += 1;
+            err(&format!(
+                "self-test: {} weakened by tune ({}) — the frozen rule no longer matches what it was frozen for",
+                id,
+                weakened.join(", ")
+            ));
+        } else if tune.extensions() > 0 {
+            out(&format!(
+                "self-test: {} tune extends its lists by {} entries (info)",
+                id,
+                tune.extensions()
+            ));
+        }
+    }
+
     let (custom_checks, custom_failed, fixtures) = self_test_custom(&cfg);
     checks += custom_checks;
     failed += custom_failed;

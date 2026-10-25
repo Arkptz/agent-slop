@@ -979,6 +979,18 @@ mod tests {
         }
     }
 
+    /// A tune alters what a scan can report, so it must move the cache key
+    /// even though no embedded text or rule level changed.
+    #[test]
+    fn a_tune_change_alters_the_ruleset_version() {
+        let base = ruleset_version(&builtin_config());
+        let tuned = agent_slop_core::config::resolve(
+            Some("[slop.tune.comment-paraphrase]\nmax_block_lines = 3\n"),
+            None,
+        );
+        assert_ne!(base, ruleset_version(&tuned));
+    }
+
     #[test]
     fn multiset_difference_respects_multiplicity() {
         let mut baseline = Multiset::new();

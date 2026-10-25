@@ -261,12 +261,23 @@ impl RuleSet {
         }
     }
 
-    /// Embedded-style sources plus compiled custom rules. The hash covers
-    /// every source text and every custom rule's file text.
+    /// Embedded-style sources plus compiled custom rules.
     #[must_use]
     pub fn with_custom(
         sources: &[(&str, &str)],
+        custom: Vec<super::custom::LoadedRule>,
+    ) -> RuleSet {
+        RuleSet::build(sources, custom, &BTreeMap::new())
+    }
+
+    /// Sources, custom rules and per-family tunes. The hash covers every
+    /// source text, every custom rule's file text and every tune value:
+    /// each of them changes which findings a scan can produce.
+    #[must_use]
+    pub fn build(
+        sources: &[(&str, &str)],
         mut custom: Vec<super::custom::LoadedRule>,
+        tune: &BTreeMap<String, super::tune::Tune>,
     ) -> RuleSet {
         custom.sort_by(|a, b| a.id.cmp(&b.id));
         let mut hasher = blake3::Hasher::new();
@@ -283,8 +294,16 @@ impl RuleSet {
             hasher.update(rule.text.as_bytes());
             hasher.update(b"\0");
         }
+        hasher.update(b"tune\0");
+        hasher.update(format!("{tune:?}").as_bytes());
+        let mut corpus = Corpus::from_sources(sources);
+        for (family, t) in tune {
+            if let Some(rule) = corpus.rules.get_mut(family) {
+                super::tune::apply(rule, t);
+            }
+        }
         RuleSet {
-            corpus: Corpus::from_sources(sources),
+            corpus,
             custom,
             hash: hasher.finalize().to_hex().to_string(),
         }

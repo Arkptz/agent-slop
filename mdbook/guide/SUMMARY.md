@@ -23,6 +23,8 @@
   - [slop/self-justification](./rules/self-justification.md)
   - [slop/config-deploy-narration](./rules/config-deploy-narration.md)
   - [slop/suppression-empty and slop/suppression-vacuous](./rules/suppression-meta.md)
+- [Custom rules](./custom-rules.md)
+- [Tuning built-ins](./tuning.md)
 - [Suppressions](./suppressions.md)
 - [Hooks and the ratchet](./hooks-and-the-ratchet.md)
 - [Linter adapters](./linter-adapters.md)

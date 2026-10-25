@@ -28,8 +28,9 @@ use serde::Deserialize;
 use serde::de::{Deserializer, MapAccess, Visitor};
 
 use crate::finding::Severity;
-use crate::rules::corpus::RuleSet;
+use crate::rules::corpus::{EMBEDDED, RuleSet};
 use crate::rules::custom::{self, LoadedRule};
+use crate::rules::tune::{self, Tune};
 
 /// Every rule family v1 knows. A name outside this set in `[slop.rules]`
 /// is reported in `notes` (it looks like intent) but kept — dropping it
@@ -227,6 +228,8 @@ pub struct ResolvedConfig {
     /// `[slop.custom] enable`: whether rule files from the user and repo
     /// rule directories are loaded.
     pub custom_enabled: bool,
+    /// `[slop.tune.<family>]` accumulated lowest-tier first.
+    pub tune: BTreeMap<String, Tune>,
     /// The rules a scan runs against. Compared by identity hash.
     pub ruleset: Arc<RuleSet>,
     pub notes: Vec<ConfigNote>,
@@ -348,6 +351,7 @@ pub fn builtin_config() -> ResolvedConfig {
         linters: BTreeMap::new(),
         judge: JudgeSettings::default(),
         custom_enabled: true,
+        tune: BTreeMap::new(),
         ruleset: RuleSet::embedded(),
         notes: Vec::new(),
     }
@@ -372,10 +376,23 @@ pub fn resolve_with(
     repo_rules: Vec<LoadedRule>,
 ) -> ResolvedConfig {
     let mut cfg = resolve_tiers(user, repo);
-    if cfg.custom_enabled {
-        custom::compile(user_rules, repo_rules, &mut cfg);
-    }
+    let custom = if cfg.custom_enabled {
+        custom::compile(user_rules, repo_rules, &mut cfg)
+    } else {
+        Vec::new()
+    };
+    finish_ruleset(&mut cfg, custom);
     cfg
+}
+
+/// Build the ruleset the scan runs: the embedded corpus with the
+/// accumulated tunes applied, plus the surviving custom rules. The shared
+/// embedded set stands when neither exists.
+fn finish_ruleset(cfg: &mut ResolvedConfig, custom: Vec<LoadedRule>) {
+    if custom.is_empty() && cfg.tune.values().all(Tune::is_empty) {
+        return;
+    }
+    cfg.ruleset = Arc::new(RuleSet::build(&EMBEDDED, custom, &cfg.tune));
 }
 
 fn resolve_tiers(user: Option<&str>, repo: Option<&str>) -> ResolvedConfig {
@@ -408,7 +425,7 @@ fn resolve_tiers(user: Option<&str>, repo: Option<&str>) -> ResolvedConfig {
                     }
                 }
             }
-            apply_section(&mut cfg, slop);
+            apply_section(&mut cfg, slop, tier, &mut notes);
         }
     }
 
@@ -452,13 +469,16 @@ pub fn load_with_rule_dirs(
     notes.extend(repo_notes);
 
     let mut cfg = resolve_tiers(user_text.as_deref(), repo_text.as_deref());
-    if cfg.custom_enabled {
+    let custom = if cfg.custom_enabled {
         let mut discovery = Vec::new();
         let user_rules = custom::discover(user_rules_dir, Tier::User, &mut discovery);
         let repo_rules = custom::discover(repo_rules_dir, Tier::Repo, &mut discovery);
         cfg.notes.extend(discovery);
-        custom::compile(&user_rules, repo_rules, &mut cfg);
-    }
+        custom::compile(&user_rules, repo_rules, &mut cfg)
+    } else {
+        Vec::new()
+    };
+    finish_ruleset(&mut cfg, custom);
     notes.append(&mut cfg.notes);
     cfg.notes = notes;
     cfg
@@ -527,6 +547,7 @@ struct SlopSection {
     linters: Option<BTreeMap<String, RawLinter>>,
     judge: Option<RawJudge>,
     custom: Option<RawCustom>,
+    tune: Option<BTreeMap<String, toml::Value>>,
 }
 
 /// `[slop.custom]`: the one switch of the custom-rule layer.
@@ -621,7 +642,12 @@ struct AgentHooksFile {
 /// Fold one tier into the running merge. Every branch is "set only when
 /// the tier spoke", which is the whole per-key contract; lists replace,
 /// `paths_extend` appends.
-fn apply_section(cfg: &mut ResolvedConfig, section: SlopSection) {
+fn apply_section(
+    cfg: &mut ResolvedConfig,
+    section: SlopSection,
+    tier: Tier,
+    notes: &mut Vec<ConfigNote>,
+) {
     if let Some(ref_) = section.ref_ {
         cfg.ref_ = ref_;
     }
@@ -655,6 +681,9 @@ fn apply_section(cfg: &mut ResolvedConfig, section: SlopSection) {
     }
     if let Some(enable) = section.custom.and_then(|c| c.enable) {
         cfg.custom_enabled = enable;
+    }
+    if let Some(raw_tune) = section.tune {
+        tune::merge_tier(&mut cfg.tune, raw_tune, tier, notes);
     }
     if let Some(judge) = section.judge {
         if let Some(enable) = judge.enable {

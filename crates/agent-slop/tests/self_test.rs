@@ -179,3 +179,57 @@ fn the_nix_user_tier_alone_passes() {
     assert_eq!(code, 0, "{text}");
     assert!(text.contains("mode Block from the user tier"), "{text}");
 }
+
+/// A tune that strips a frozen blocking family's phrases weakens the gate
+/// exactly like a demotion, and must fail the same way.
+#[test]
+fn removing_a_frozen_familys_phrases_by_tune_fails() {
+    let s = Scratch::new("tune-weaken");
+    s.user_tier("[slop.tune.comment-history]\nphrases_remove = [\"previously\"]\n");
+    let (code, text) = s.run();
+    assert_eq!(code, 1, "a weakened frozen rule must fail: {text}");
+    assert!(
+        text.contains("slop/comment-history weakened by tune"),
+        "{text}"
+    );
+}
+
+/// Extending a frozen family's list only adds matches: reported, not
+/// failed.
+#[test]
+fn extending_a_frozen_familys_phrases_is_info_not_failure() {
+    let s = Scratch::new("tune-extend");
+    s.user_tier("[slop.tune.comment-history]\nphrases_extend = [\"back then\"]\n");
+    let (code, text) = s.run();
+    assert_eq!(code, 0, "{text}");
+    assert!(
+        text.contains("slop/comment-history tune extends its lists by 1 entries"),
+        "{text}"
+    );
+}
+
+/// A tune on a non-frozen family is nobody's business: no note, no
+/// failure, but the behaviour changes.
+#[test]
+fn tuning_a_non_frozen_family_passes_and_changes_behaviour() {
+    let s = Scratch::new("tune-other");
+    s.user_tier("[slop.tune.perf-claim]\nphrases_extend = [\"blazing fast in prod\"]\n");
+    let (code, text) = s.run();
+    assert_eq!(code, 0, "{text}");
+
+    std::fs::write(s.repo.join("a.py"), "# blazing fast in prod\nx = 1\n").expect("write");
+    let out = Command::new(env!("CARGO_BIN_EXE_agent-slop"))
+        .args(["check", "a.py"])
+        .current_dir(&s.repo)
+        .env("HOME", &s.home)
+        .env("XDG_CACHE_HOME", s.root.join("cache"))
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .expect("spawn agent-slop");
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        text.contains("slop/perf-claim"),
+        "the extended phrase must fire: {text}"
+    );
+}

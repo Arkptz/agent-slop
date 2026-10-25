@@ -165,6 +165,20 @@ usual eligibility rules still apply. `<name>` is an adapter name from
 | `severity` | level | `"warning"` | The level imported findings report at. Imported findings are *capped*: a linter's own severity can never make a finding `error` — the only path to `error` is an explicit `overrides` promotion. |
 | `overrides` | map of full id to level | `{}` | Per-code promote/demote, consulted before `severity` (`"ruff/E501" = "off"`). |
 
+## `[slop.custom]` and `[slop.tune.<family>]`
+
+`[slop.custom]` carries the one switch of the custom-rule layer:
+
+```toml
+[slop.custom]
+enable = false   # default true; per-key merged like everything else
+```
+
+`[slop.tune.<family>]` adjusts an embedded family; see
+[Tuning built-ins](./tuning.md). List keys concatenate across tiers,
+numeric keys replace per key, and everything invalid is a note, never an
+error.
+
 ## `[slop.judge]`
 
 The optional [Laya judge](./judge.md) — a second verdict printed as context

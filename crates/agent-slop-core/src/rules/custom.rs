@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use super::corpus::{EMBEDDED, RuleFile, RuleSet};
+use super::corpus::{RuleFile, RuleSet};
 use crate::config::{ConfigNote, ResolvedConfig, RuleLevel, Tier};
 
 /// A loaded custom rule with the tier it came from.
@@ -272,8 +272,12 @@ fn declared_level(rule: &RuleFile, tier: Tier, notes: &mut Vec<ConfigNote>) -> R
 /// Compile the custom layer into the resolved config: per-id replacement
 /// (repo replaces user whole), declared levels into the family table,
 /// the strict-lint check on every `error` override, and a rebuilt
-/// ruleset when any rule survived.
-pub fn compile(user_rules: &[LoadedRule], repo_rules: Vec<LoadedRule>, cfg: &mut ResolvedConfig) {
+/// the effective rules for the caller to build the ruleset from.
+pub fn compile(
+    user_rules: &[LoadedRule],
+    repo_rules: Vec<LoadedRule>,
+    cfg: &mut ResolvedConfig,
+) -> Vec<LoadedRule> {
     let mut notes = std::mem::take(&mut cfg.notes);
 
     let mut by_id: BTreeMap<String, LoadedRule> = user_rules
@@ -326,14 +330,8 @@ pub fn compile(user_rules: &[LoadedRule], repo_rules: Vec<LoadedRule>, cfg: &mut
         }
     }
 
-    if !by_id.is_empty() {
-        cfg.ruleset = Arc::new(RuleSet::with_custom(
-            &EMBEDDED,
-            by_id.into_values().collect(),
-        ));
-    }
-
     cfg.notes = notes;
+    by_id.into_values().collect()
 }
 
 /// Outcome of one `[[fixture]]`.
