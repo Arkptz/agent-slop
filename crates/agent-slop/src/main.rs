@@ -15,16 +15,16 @@ fn elapsed_ms(started: Instant) -> u64 {
     u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
 
-use agent_slop_core::{config, finding};
+use agent_slop_core::{config, finding, rules};
 use agent_slop_integrations::{judge, telemetry};
 
-use std::collections::BTreeMap;
 use std::io::IsTerminal;
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
 use cli::{Cli, FailOn, Format, ScanArgs};
-use config::{ResolvedConfig, RuleLevel};
+use config::{ResolvedConfig, RuleLevel, Tier};
+use rules::custom::{self, LoadedRule};
 
 fn main() -> ExitCode {
     match cli::parse() {
@@ -33,6 +33,8 @@ fn main() -> ExitCode {
         Cli::Hook => ExitCode::from(hook::run()),
         Cli::Explain { rule_id } => run_explain(&rule_id),
         Cli::Rules { format } => run_rules(format),
+        Cli::RulesLint { files } => run_rules_lint(&files),
+        Cli::RulesTest { files } => run_rules_test(&files),
         Cli::Baseline { since } => run_baseline(since.as_deref()),
         Cli::SelfTest => run_self_test(),
     }
@@ -182,17 +184,20 @@ fn run_explain(rule_id: &str) -> ExitCode {
     match level_of(&cfg, rule_id) {
         Some(level) => {
             out(&format!("{rule_id}: {}", level_str(level)));
-            let corpus = &cfg.ruleset.corpus;
-            if let Some(rule) = rule_id
-                .strip_prefix("slop/")
-                .and_then(|family| corpus.rules.get(family))
-            {
+            if let Some(rule) = cfg.ruleset.find(rule_id) {
                 out(&format!("  do instead: {}", rule.note.text.trim()));
                 if !rule.exception.shape.trim().is_empty() {
                     out(&format!("  exception: {}", rule.exception.shape.trim()));
                 }
             }
-            if rule_id.starts_with("slop/") {
+            if let Some(custom) = cfg.ruleset.custom.iter().find(|c| c.id == rule_id) {
+                out(&format!(
+                    "  source: {} ({} tier)",
+                    custom.source.display(),
+                    tier_str(custom.tier)
+                ));
+            }
+            if rule_id.starts_with("slop/") || cfg.is_custom(rule_id) {
                 out(&format!(
                     "  suppress: // agent-slop: allow {rule_id} -- <reason with a referent: \
                      URL, ADR-064, owner/repo#1, path/to/it, date:2026-09-21>"
@@ -210,25 +215,35 @@ fn run_explain(rule_id: &str) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+fn tier_str(tier: Tier) -> &'static str {
+    match tier {
+        Tier::User => "user",
+        Tier::Repo => "repo",
+    }
+}
+
 fn run_rules(format: Option<Format>) -> ExitCode {
     let cfg = config::load();
     print_notes(&cfg);
 
-    // Families as full ids, then the overrides table on top.
-    let mut levels: BTreeMap<String, RuleLevel> = cfg
-        .rules
-        .iter()
-        .map(|(family, level)| (format!("slop/{family}"), *level))
-        .collect();
-    for (rule_id, level) in &cfg.overrides {
-        levels.insert(rule_id.clone(), *level);
-    }
-
+    let levels = cfg.effective_levels();
     match format {
         Some(Format::Json) => {
             let rules: Vec<_> = levels
                 .iter()
-                .map(|(id, level)| serde_json::json!({"id": id, "level": level_str(*level)}))
+                .map(|(id, level)| {
+                    let custom = cfg.ruleset.custom.iter().find(|c| c.id == *id);
+                    serde_json::json!({
+                        "id": id,
+                        "level": level_str(*level),
+                        "producer": id.split('/').next().unwrap_or_default(),
+                        "tier": custom.map_or("built-in", |c| tier_str(c.tier)),
+                        "source": custom.map_or_else(
+                            || "embedded".to_string(),
+                            |c| c.source.display().to_string(),
+                        ),
+                    })
+                })
                 .collect();
             out(&serde_json::json!({"schema": 1, "rules": rules}).to_string());
         }
@@ -239,6 +254,113 @@ fn run_rules(format: Option<Format>) -> ExitCode {
         }
     }
     ExitCode::SUCCESS
+}
+
+/// The rule files `rules lint` / `rules test` act on: the named files, or
+/// every file of the discovered tiers. Drop reasons come back as notes.
+fn rule_targets(files: &[String]) -> (Vec<LoadedRule>, Vec<String>) {
+    let mut notes = Vec::new();
+    let mut loaded = Vec::new();
+    if files.is_empty() {
+        let (user_cfg, repo_cfg) = config::tier_paths();
+        let (user_dir, repo_dir) = config::rule_dirs_for(user_cfg.as_deref(), repo_cfg.as_deref());
+        let mut tier_notes = Vec::new();
+        loaded.extend(custom::discover(
+            user_dir.as_deref(),
+            Tier::User,
+            &mut tier_notes,
+        ));
+        loaded.extend(custom::discover(
+            repo_dir.as_deref(),
+            Tier::Repo,
+            &mut tier_notes,
+        ));
+        notes.extend(tier_notes.into_iter().map(|n| n.reason));
+    } else {
+        let repo_top = config::git_toplevel();
+        for file in files {
+            let path = std::path::Path::new(file);
+            let tier = match (&repo_top, std::fs::canonicalize(path)) {
+                (Some(top), Ok(abs)) if abs.starts_with(top) => Tier::Repo,
+                _ => Tier::User,
+            };
+            let mut file_notes = Vec::new();
+            match std::fs::read_to_string(path) {
+                Ok(text) => loaded.extend(custom::load_text(&text, path, tier, &mut file_notes)),
+                Err(err) => notes.push(format!("{file}: unreadable: {err}")),
+            }
+            notes.extend(file_notes.into_iter().map(|n| n.reason));
+        }
+    }
+    (loaded, notes)
+}
+
+fn run_rules_lint(files: &[String]) -> ExitCode {
+    let (loaded, dropped) = rule_targets(files);
+    let mut problems = 0usize;
+    for reason in &dropped {
+        problems += 1;
+        err(&format!("rules lint: {reason}"));
+    }
+    for rule in &loaded {
+        let found = custom::lint(rule);
+        for problem in &found {
+            err(&format!(
+                "rules lint: {} ({} tier, {}): {problem}",
+                rule.id,
+                tier_str(rule.tier),
+                rule.source.display()
+            ));
+        }
+        problems += found.len();
+    }
+    out(&format!(
+        "rules lint: {} rule files checked, {problems} problems",
+        loaded.len() + dropped.len()
+    ));
+    if problems == 0 {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(1)
+    }
+}
+
+fn run_rules_test(files: &[String]) -> ExitCode {
+    let (loaded, dropped) = rule_targets(files);
+    let mut red = dropped.len();
+    for reason in &dropped {
+        err(&format!("rules test: {reason}"));
+    }
+    let mut total = 0usize;
+    for rule in &loaded {
+        for result in custom::run_fixtures(rule) {
+            total += 1;
+            if result.passed {
+                out(&format!(
+                    "ok   {} fixture {} ({})",
+                    rule.id,
+                    result.index + 1,
+                    result.expect
+                ));
+            } else {
+                red += 1;
+                err(&format!(
+                    "FAIL {} fixture {} ({}) [{} tier]: {}",
+                    rule.id,
+                    result.index + 1,
+                    result.expect,
+                    tier_str(rule.tier),
+                    result.detail
+                ));
+            }
+        }
+    }
+    out(&format!("rules test: {total} fixtures, {red} red"));
+    if red == 0 {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(1)
+    }
 }
 
 /// The baseline multiset the Stop gate would subtract, for debugging a
@@ -350,14 +472,57 @@ fn run_self_test() -> ExitCode {
         ));
     }
 
+    let (custom_checks, custom_failed, fixtures) = self_test_custom(&cfg);
+    checks += custom_checks;
+    failed += custom_failed;
+
     out(&format!(
-        "self-test: {checks} checks, {failed} failed (fixtures land with the rules corpus)"
+        "self-test: {checks} checks, {failed} failed ({fixtures} custom rule fixtures run)"
     ));
     if failed == 0 {
         ExitCode::SUCCESS
     } else {
         ExitCode::from(1)
     }
+}
+
+/// Custom rule fixtures run through the real engine; a red one names the
+/// tier whose file is broken. Errors outside `slop/*` are listed, not
+/// failed: the frozen set governs the embedded families only. Returns
+/// `(checks, failed, fixtures run)`.
+fn self_test_custom(cfg: &ResolvedConfig) -> (usize, usize, usize) {
+    let (mut checks, mut failed) = (0usize, 0usize);
+    for rule in &cfg.ruleset.custom {
+        for result in custom::run_fixtures(rule) {
+            checks += 1;
+            if !result.passed {
+                failed += 1;
+                err(&format!(
+                    "self-test: custom rule {} fixture {} ({}) is red in the {} tier ({}): {}",
+                    rule.id,
+                    result.index + 1,
+                    result.expect,
+                    tier_str(rule.tier),
+                    rule.source.display(),
+                    result.detail
+                ));
+            }
+        }
+    }
+    for (id, level) in cfg.effective_levels() {
+        if level == RuleLevel::Error && !id.starts_with("slop/") {
+            let tier = cfg
+                .ruleset
+                .custom
+                .iter()
+                .find(|c| c.id == id)
+                .map_or("config", |c| tier_str(c.tier));
+            out(&format!(
+                "self-test: {id} blocks at error (defined in the {tier} tier)"
+            ));
+        }
+    }
+    (checks, failed, checks)
 }
 
 /// Every `slop/*` rule the resolved config blocks on, sorted: the family
@@ -395,16 +560,10 @@ fn tier_of<T: PartialEq>(
     }
 }
 
-/// Same routing as `ResolvedConfig::severity_for` but keeping `off`
-/// distinct from foreign — `explain` names the level, not just a finding.
+/// Keeps `off` distinct from foreign — `explain` names the level, not
+/// just a finding.
 fn level_of(cfg: &ResolvedConfig, rule_id: &str) -> Option<RuleLevel> {
-    if let Some(level) = cfg.overrides.get(rule_id) {
-        return Some(*level);
-    }
-    rule_id
-        .strip_prefix("slop/")
-        .and_then(|family| cfg.rules.get(family))
-        .copied()
+    cfg.level_of(rule_id)
 }
 
 fn level_str(level: RuleLevel) -> &'static str {

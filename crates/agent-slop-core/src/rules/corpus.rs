@@ -247,6 +247,20 @@ impl RuleSet {
         RuleSet::with_custom(sources, Vec::new())
     }
 
+    /// The rule file behind a full id: `slop/<family>` from the corpus,
+    /// anything else from the loaded custom rules.
+    #[must_use]
+    pub fn find(&self, rule_id: &str) -> Option<&RuleFile> {
+        match rule_id.strip_prefix("slop/") {
+            Some(family) => self.corpus.rules.get(family),
+            None => self
+                .custom
+                .iter()
+                .find(|c| c.id == rule_id)
+                .map(|c| &c.rule),
+        }
+    }
+
     /// Embedded-style sources plus compiled custom rules. The hash covers
     /// every source text and every custom rule's file text.
     #[must_use]

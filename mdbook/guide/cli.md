@@ -176,6 +176,17 @@ slop/nope: no config entry (off, foreign, or unknown)
 
 Imported ids (`ruff/F401`) get the note that they suppress via their own
 linter mechanism (`noqa`, `allow`, `disable`), not via agent-slop lines.
+A custom id also prints the file it was read from and its tier:
+
+```console
+$ agent-slop explain acme/no-placeholder
+acme/no-placeholder: warning
+  do instead: Implement it, or file a TODO that names the condition for removing the stub.
+  exception: A stub that a test replaces with a fake on purpose, and says so.
+  source: /home/me/.config/agent-slop/rules/no-placeholder.toml (user tier)
+  suppress: // agent-slop: allow acme/no-placeholder -- <reason with a referent: URL, ADR-064, owner/repo#1, path/to/it, date:2026-09-21>
+```
+
 Before the verdict, any config-degradation notes are printed to stderr
 (`config note (Repo tier): …`, `rule corpus: <family> dropped, …`).
 
@@ -199,16 +210,53 @@ slop/comment-language        off
 ...
 ```
 
-`--format json` prints the machine-readable form:
+`--format json` prints the machine-readable form; custom rules carry the
+`producer`, the `tier` that defined them and the file they were read from:
 
 ```console
 $ agent-slop rules --format json
-{"rules":[{"id":"slop/bare-reference","level":"warning"},...],"schema":1}
+{"schema":1,"rules":[{"id":"acme/no-placeholder","level":"warning","producer":"acme","tier":"user","source":"/home/me/.config/agent-slop/rules/no-placeholder.toml"},{"id":"slop/comment-history","level":"error","producer":"slop","tier":"built-in","source":"embedded"}]}
 ```
 
 `json` is the only format that changes the output: `human`, `jsonl` and
 `github` all print the table. An invalid `--format` value or an unexpected
 argument is a usage error (exit 3). Exit: 0.
+
+## `rules lint` and `rules test`
+
+```text
+agent-slop rules lint [FILES...]
+agent-slop rules test [FILES...]
+```
+
+The two commands behind custom rules (`~/.config/agent-slop/rules/*.toml`,
+`<toplevel>/.agent-slop/rules/*.toml`). With no files, both act on every
+file of the discovered tiers; with files, on exactly those. `lint` checks a
+rule file: parse, ids, match section, fixtures, and the strict-lint bar a
+promotion to `error` must clear. `test` runs each `[[fixture]]` through the
+real engine:
+
+```console
+$ agent-slop rules lint
+rules lint: 1 rule files checked, 0 problems
+
+$ agent-slop rules test
+ok   acme/no-placeholder fixture 1 (hit)
+ok   acme/no-placeholder fixture 2 (miss)
+rules test: 2 fixtures, 0 red
+```
+
+A red fixture names the rule, its tier and why it disagrees:
+
+```console
+$ agent-slop rules test
+ok   acme/no-placeholder fixture 1 (hit)
+FAIL acme/no-placeholder fixture 2 (miss) [user tier]: expected a miss, rule fired 1x
+rules test: 2 fixtures, 1 red
+```
+
+Exit: `0` clean, `1` problems (a dropped file, a lint gap, a red fixture),
+`3` usage error.
 
 ## `baseline`
 
@@ -243,14 +291,19 @@ exist, which tier last set `mode`, and then asserts:
   set from SPEC-006 — a repo `.agent-hooks.toml` that promotes or demotes a
   rule past the frozen set fails here, naming the offending tier;
 - `mode` was not weakened to `observe` by a higher tier while a lower tier
-  said `block` (an inert gate).
+  said `block` (an inert gate);
+- every custom rule's `[[fixture]]` cases pass through the real engine; a
+  red one fails, naming the tier whose file is broken.
+
+Custom rules promoted to `error` are listed, not failed: the frozen set
+governs the embedded families only.
 
 ```console
 $ agent-slop self-test
 self-test: user tier /home/me/.config/agent-slop/config.toml
 self-test: repo tier absent (/work/repo/.agent-hooks.toml)
 self-test: mode Block from the user tier
-self-test: 18 checks, 0 failed (fixtures land with the rules corpus)
+self-test: 20 checks, 0 failed (2 custom rule fixtures run)
 ```
 
 Exit: `0` all checks pass, `1` otherwise.

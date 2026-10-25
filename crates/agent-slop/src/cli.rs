@@ -37,6 +37,9 @@ agent-slop hook                stdin: harness JSON; dispatches on hookEventName
                                Stop → 0 allow | 2 block, reason on stderr
 agent-slop explain <rule-id>   rule text, exception, ready suppression line; 0
 agent-slop rules --format json machine-readable rule list and levels; 0
+agent-slop rules lint [FILES...]  check custom rule files (every discovered tier when none
+                               are named): drop reasons, strict-lint gaps, red fixtures; 0 | 1
+agent-slop rules test [FILES...]  run the [[fixture]] cases of custom rules through the engine; 0 | 1
 agent-slop baseline --since <ref>  print the baseline multiset (debug); 0
 agent-slop self-test           embedded fixtures; 0 | 1    ← POL-026 evidence"
         .to_string()
@@ -115,6 +118,14 @@ pub(crate) enum Cli {
     Rules {
         format: Option<Format>,
     },
+    /// `rules lint [FILES...]`; no files means every discovered tier.
+    RulesLint {
+        files: Vec<String>,
+    },
+    /// `rules test [FILES...]`; no files means every discovered tier.
+    RulesTest {
+        files: Vec<String>,
+    },
     /// `baseline --since <ref>`: the ref is required, enforced by the
     /// parser (a bare `baseline` is a usage error).
     Baseline {
@@ -140,9 +151,7 @@ pub(crate) fn parse() -> Cli {
         "explain" => Cli::Explain {
             rule_id: required(&mut args, "explain <rule-id>"),
         },
-        "rules" => Cli::Rules {
-            format: parse_rules(&mut args),
-        },
+        "rules" => parse_rules(args.collect()),
         "baseline" => Cli::Baseline {
             since: parse_baseline(&mut args),
         },
@@ -197,11 +206,37 @@ fn parse_scan(args: &mut impl Iterator<Item = String>) -> ScanArgs {
     o
 }
 
-fn parse_rules(args: &mut impl Iterator<Item = String>) -> Option<Format> {
+fn parse_rules(args: Vec<String>) -> Cli {
+    let sub = args.first().map(String::as_str);
+    if matches!(sub, Some("lint" | "test")) {
+        let lint = sub == Some("lint");
+        let mut files = Vec::new();
+        for a in &args[1..] {
+            match a.as_str() {
+                "--help" | "-h" => {
+                    print!("{}", usage());
+                    std::process::exit(0);
+                }
+                other if other.starts_with("--") => {
+                    usage_error(&format!(
+                        "unknown flag for rules {}: {other}",
+                        sub.unwrap_or("")
+                    ));
+                }
+                _ => files.push(a.clone()),
+            }
+        }
+        return if lint {
+            Cli::RulesLint { files }
+        } else {
+            Cli::RulesTest { files }
+        };
+    }
     let mut format = None;
-    while let Some(a) = args.next() {
+    let mut rest = args.into_iter();
+    while let Some(a) = rest.next() {
         match a.as_str() {
-            "--format" => format = Some(parse_format(&value(args, "--format"))),
+            "--format" => format = Some(parse_format(&value(&mut rest, "--format"))),
             "--help" | "-h" => {
                 print!("{}", usage());
                 std::process::exit(0);
@@ -209,7 +244,7 @@ fn parse_rules(args: &mut impl Iterator<Item = String>) -> Option<Format> {
             other => usage_error(&format!("unexpected argument for rules: {other}")),
         }
     }
-    format
+    Cli::Rules { format }
 }
 
 fn parse_baseline(args: &mut impl Iterator<Item = String>) -> Option<String> {

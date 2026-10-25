@@ -220,18 +220,6 @@ pub fn discover(dir: Option<&Path>, tier: Tier, notes: &mut Vec<ConfigNote>) -> 
         .collect()
 }
 
-/// Rule directories for the two tiers: siblings of the config files.
-#[must_use]
-pub fn tier_dirs(
-    user_config: Option<&Path>,
-    repo_root: Option<&Path>,
-) -> (Option<PathBuf>, Option<PathBuf>) {
-    (
-        user_config.and_then(|p| p.parent().map(|d| d.join("rules"))),
-        repo_root.map(|r| r.join(".agent-slop").join("rules")),
-    )
-}
-
 /// The strict-lint bar an override must clear before it may take a
 /// `<producer>/*` rule to `error`: a non-empty exception, a note over 40
 /// characters, and at least one hit and one miss fixture, each carrying
@@ -304,21 +292,37 @@ pub fn compile(user_rules: &[LoadedRule], repo_rules: Vec<LoadedRule>, cfg: &mut
 
     for loaded in by_id.values() {
         let id = loaded.id.clone();
-        if cfg.overrides.get(&id) == Some(&RuleLevel::Error) {
-            let gaps = strict_lint_gaps(&loaded.rule);
-            if !gaps.is_empty() {
-                notes.push(ConfigNote {
-                    tier: loaded.tier,
-                    reason: format!(
-                        "override to error on {id} clamped to warning: {}",
-                        gaps.join("; ")
-                    ),
-                });
-                cfg.overrides.insert(id.clone(), RuleLevel::Warning);
+        // An explicit config entry wins over the file's declared level, in
+        // either table; `error` there passes the same strict-lint bar.
+        let in_overrides = cfg.overrides.contains_key(&id);
+        let explicit = cfg
+            .overrides
+            .get(&id)
+            .or_else(|| cfg.rules.get(&id))
+            .copied();
+        match explicit {
+            Some(RuleLevel::Error) => {
+                let gaps = strict_lint_gaps(&loaded.rule);
+                if !gaps.is_empty() {
+                    notes.push(ConfigNote {
+                        tier: loaded.tier,
+                        reason: format!(
+                            "override to error on {id} clamped to warning: {}",
+                            gaps.join("; ")
+                        ),
+                    });
+                    if in_overrides {
+                        cfg.overrides.insert(id, RuleLevel::Warning);
+                    } else {
+                        cfg.rules.insert(id, RuleLevel::Warning);
+                    }
+                }
             }
-        } else {
-            let level = declared_level(&loaded.rule, loaded.tier, &mut notes);
-            cfg.rules.insert(id.clone(), level);
+            Some(_) => {}
+            None => {
+                let level = declared_level(&loaded.rule, loaded.tier, &mut notes);
+                cfg.rules.insert(id, level);
+            }
         }
     }
 
@@ -389,16 +393,28 @@ pub fn run_fixtures(loaded: &LoadedRule) -> Vec<FixtureResult> {
         .collect()
 }
 
-/// Everything `rules lint` reports about one rule: the strict-lint gaps
-/// (they only matter when the rule is promoted) and red fixtures.
+/// Everything `rules lint` reports about one rule: a declared `error`,
+/// missing fixtures, the strict-lint gaps that would refuse a promotion,
+/// and red fixtures.
 #[must_use]
 pub fn lint(loaded: &LoadedRule) -> Vec<String> {
-    let mut problems: Vec<String> = strict_lint_gaps(&loaded.rule)
-        .into_iter()
-        .map(|gap| format!("cannot be promoted to error: {gap}"))
-        .collect();
-    if !loaded.rule.fixture.iter().any(|f| f.expect == "miss") {
-        problems.push("no miss fixture: a rule that never fails a negative proves nothing".into());
+    let rule = &loaded.rule;
+    let mut problems = Vec::new();
+    if rule.meta.severity == "error" {
+        problems.push("declares severity error: custom rules arrive as warning, promote via [slop.rules.overrides]".to_string());
+    }
+    let has = |expect: &str| rule.fixture.iter().any(|f| f.expect == expect);
+    for expect in ["hit", "miss"] {
+        if !has(expect) {
+            problems.push(format!("no {expect} fixture"));
+        }
+    }
+    for gap in strict_lint_gaps(rule) {
+        let missing_kind = (gap.starts_with("no hit fixture") && !has("hit"))
+            || (gap.starts_with("no miss fixture") && !has("miss"));
+        if !missing_kind {
+            problems.push(format!("cannot be promoted to error: {gap}"));
+        }
     }
     for r in run_fixtures(loaded) {
         if !r.passed {
@@ -674,6 +690,14 @@ x = 1
         let rule = rule.expect("loads");
         assert!(run_fixtures(&rule).iter().all(|r| r.passed));
         assert!(lint(&rule).is_empty(), "{:?}", lint(&rule));
+
+        let no_miss = RULE.replace("expect = \"miss\"", "expect = \"hit\"");
+        let (rule, _) = load(&no_miss);
+        assert!(
+            lint(&rule.expect("loads"))
+                .iter()
+                .any(|p| p == "no miss fixture"),
+        );
 
         let red = RULE.replace("# a real implementation", "# placeholder implementation");
         let (rule, _) = load(&red);

@@ -25,7 +25,7 @@ use crate::elapsed_ms;
 use crate::ratchet::{self, Cache, Repo};
 use agent_slop_core::config::{self, ResolvedConfig};
 use agent_slop_core::finding::{Finding, Severity};
-use agent_slop_core::rules::{corpus::Corpus, scan_source};
+use agent_slop_core::rules::{corpus::RuleSet, scan_source};
 use agent_slop_integrations::telemetry::{self, RowInput};
 
 /// At most three advice lines reach the model per tool call; more is a
@@ -463,7 +463,7 @@ fn stop(cfg: &ResolvedConfig, payload: &HookPayload, cwd: &std::path::Path) -> O
     Outcome {
         code: 2,
         stdout: Vec::new(),
-        stderr: render_block(&gate.blocking, &gate.added, &judged),
+        stderr: render_block(&cfg.ruleset, &gate.blocking, &gate.added, &judged),
         row: Some(row),
     }
 }
@@ -473,11 +473,11 @@ fn stop(cfg: &ResolvedConfig, payload: &HookPayload, cwd: &std::path::Path) -> O
 /// gate, so each error carries the rule's exception shape and a
 /// ready-to-paste suppression line.
 fn render_block(
+    ruleset: &RuleSet,
     blocking: &[Finding],
     added: &[Finding],
     judged: &[Option<agent_slop_integrations::judge::Verdict>],
 ) -> Vec<String> {
-    let corpus = Corpus::load();
     let mut lines =
         vec!["agent-slop: this turn added slop that blocks (ADR-064 ratchet)".to_string()];
     let mut shown_per_rule: BTreeMap<&str, usize> = BTreeMap::default();
@@ -495,8 +495,7 @@ fn render_block(
         if let Some(Some(v)) = judged.get(i) {
             lines.push(format!("    laya: {}", v.render()));
         }
-        let family = f.rule.strip_prefix("slop/").unwrap_or(&f.rule);
-        if let Some(rule) = corpus.rules.get(family) {
+        if let Some(rule) = ruleset.find(&f.rule) {
             if !rule.exception.shape.is_empty() {
                 lines.push(format!("    legitimate when: {}", rule.exception.shape));
             }
@@ -735,7 +734,13 @@ mod tests {
             suppression: None,
             fixable: true,
         };
-        let lines = render_block(std::slice::from_ref(&f), std::slice::from_ref(&f), &[None]);
+        let ruleset = agent_slop_core::config::builtin_config().ruleset;
+        let lines = render_block(
+            &ruleset,
+            std::slice::from_ref(&f),
+            std::slice::from_ref(&f),
+            &[None],
+        );
         let text = lines.join("\n");
         assert!(text.contains("legitimate when:"), "{text}");
         assert!(
@@ -763,7 +768,8 @@ mod tests {
             fixable: true,
         };
         let blocking: Vec<Finding> = (1..=8).map(mk).collect();
-        let text = render_block(&blocking, &blocking, &[]).join("\n");
+        let ruleset = agent_slop_core::config::builtin_config().ruleset;
+        let text = render_block(&ruleset, &blocking, &blocking, &[]).join("\n");
         assert_eq!(text.matches("session residue").count(), PER_RULE_CEILING);
         assert!(text.contains("+3 more slop/comment-meta"), "{text}");
     }

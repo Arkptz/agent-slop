@@ -397,7 +397,7 @@ fn resolve_tiers(user: Option<&str>, repo: Option<&str>) -> ResolvedConfig {
         if let Some(slop) = parsed.slop {
             if let Some(rules) = &slop.rules {
                 for family in rules.families.keys() {
-                    if !KNOWN_FAMILIES.contains(&family.as_str()) {
+                    if !family.contains('/') && !KNOWN_FAMILIES.contains(&family.as_str()) {
                         notes.push(ConfigNote {
                             tier,
                             reason: format!(
@@ -416,14 +416,26 @@ fn resolve_tiers(user: Option<&str>, repo: Option<&str>) -> ResolvedConfig {
     cfg
 }
 
+/// The custom-rule directories that belong to the two config files:
+/// `rules/` beside the user file, `.agent-slop/rules/` beside the repo
+/// file (the git toplevel).
+#[must_use]
+pub fn rule_dirs_for(
+    user: Option<&Path>,
+    repo: Option<&Path>,
+) -> (Option<PathBuf>, Option<PathBuf>) {
+    (
+        user.and_then(|p| p.parent().map(|d| d.join("rules"))),
+        repo.and_then(|p| p.parent().map(|d| d.join(".agent-slop").join("rules"))),
+    )
+}
+
 /// Read both tiers from disk. A `NotFound` file is the common case and
 /// records nothing; any other read failure drops that tier with a reason.
-/// Custom rules are read from `rules/` next to the user file and from
-/// `.agent-slop/rules/` next to the repo file.
+/// Custom rules are read from the directories [`rule_dirs_for`] names.
 #[must_use]
 pub fn load_from_paths(user: Option<&Path>, repo: Option<&Path>) -> ResolvedConfig {
-    let user_dir = user.and_then(|p| p.parent().map(|d| d.join("rules")));
-    let repo_dir = repo.and_then(|p| p.parent().map(|d| d.join(".agent-slop").join("rules")));
+    let (user_dir, repo_dir) = rule_dirs_for(user, repo);
     load_with_rule_dirs(user, repo, user_dir.as_deref(), repo_dir.as_deref())
 }
 
