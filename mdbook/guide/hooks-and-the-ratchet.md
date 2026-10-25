@@ -198,9 +198,13 @@ Baseline fingerprints are cached under
 `$XDG_CACHE_HOME/agent-slop/v1/<key>.json`, one small JSON array of
 fingerprints per `(ruleset version, file extension, content hash)` key.
 Blobs are immutable and a rule change changes the key, so an entry is valid
-forever. The *ruleset version* is a hash of the package version plus the
-embedded rule files, so a rebuild with different rules invalidates
-everything rather than serving old fingerprints. `--no-cache` on `scan`
+forever. The *ruleset version* is a hash of the package version, every embedded rule
+file, and the effective level of every rule id in the resolved config, so a
+rebuild with different rules — or a tier that switches a rule on or off —
+invalidates everything rather than serving old fingerprints. Without the
+level half, a baseline cached while a rule was `off` would keep serving
+after a promotion, and the debt the file already carried would be charged
+to the session as added. `--no-cache` on `scan`
 disables writing and reading these entries; session state is unaffected.
 
 ## Exit-code matrix
