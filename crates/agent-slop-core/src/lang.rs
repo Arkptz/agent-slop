@@ -330,6 +330,31 @@ fn next_ids_after(root: &Node<'_, StrDoc<SupportLang>>, offset: usize, deep: boo
     ids
 }
 
+/// Every language name the scanner knows, in table order.
+pub fn lang_names() -> impl Iterator<Item = &'static str> {
+    LANGS.iter().map(|s| s.name)
+}
+
+/// A representative file extension for a language name.
+#[must_use]
+pub fn ext_for_lang(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "rust" => "rs",
+        "java" => "java",
+        "python" => "py",
+        "go" => "go",
+        "typescript" => "ts",
+        "tsx" => "tsx",
+        "javascript" => "js",
+        "bash" => "sh",
+        "nix" => "nix",
+        "c" => "c",
+        "cpp" => "cpp",
+        "yaml" => "yaml",
+        _ => return None,
+    })
+}
+
 /// Map a file path to its spec by extension. Unknown → `None` (the caller
 /// skips the file).
 #[must_use]

@@ -38,12 +38,48 @@ pub struct RuleFile {
     pub exception: ExceptionSection,
     #[serde(default)]
     pub note: NoteSection,
+    /// Custom rules only: examples run through the real engine.
+    #[serde(default)]
+    pub fixture: Vec<Fixture>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct RuleMeta {
     pub id: String,
+    #[serde(default)]
     pub severity: String,
+    /// Custom rules only: the file schema version, `1`.
+    #[serde(default)]
+    pub schema: Option<u32>,
+    /// Custom rules only: language names; empty means all.
+    #[serde(default)]
+    pub langs: Vec<String>,
+    /// Custom rules only: include globs; empty means everywhere.
+    #[serde(default)]
+    pub paths: Vec<String>,
+    #[serde(default)]
+    pub exclude_paths: Vec<String>,
+    /// Custom rules only: `comment` and/or `docstring`; empty means both.
+    #[serde(default)]
+    pub targets: Vec<String>,
+}
+
+/// One `[[fixture]]` of a custom rule.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct Fixture {
+    /// `hit` or `miss`.
+    #[serde(default)]
+    pub expect: String,
+    #[serde(default)]
+    pub lang: String,
+    /// Where a hit was seen in real code; required for promotion to error.
+    #[serde(default)]
+    pub provenance: String,
+    #[serde(default)]
+    pub source: String,
+    /// Display path for path-scoped rules; defaults to `fixture.<ext>`.
+    #[serde(default)]
+    pub path: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -95,6 +131,22 @@ pub struct MatchSection {
     /// about what the module has no right to know is not a why.
     #[serde(default)]
     pub why_exemption_cancels: Vec<String>,
+    /// Custom rules only: `phrase`, `anchored-marker`,
+    /// `marker-without-condition` or `regex`.
+    #[serde(default)]
+    pub kind: Option<String>,
+    /// Custom rules only: `comment` (default) or `block`.
+    #[serde(default)]
+    pub unit: Option<String>,
+    /// Custom rules only: regular expressions for `kind = "regex"`.
+    #[serde(default)]
+    pub patterns: Vec<String>,
+    /// Custom rules only: a second phrase list that must also match.
+    #[serde(default)]
+    pub requires_phrases: Vec<String>,
+    /// Custom rules only: finding text; `{match}` is the matched string.
+    #[serde(default)]
+    pub message: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -171,6 +223,8 @@ impl Corpus {
 #[derive(Debug)]
 pub struct RuleSet {
     pub corpus: Corpus,
+    /// Custom rules in id order.
+    pub custom: Vec<super::custom::LoadedRule>,
     pub hash: String,
 }
 
@@ -190,15 +244,34 @@ impl RuleSet {
 
     #[must_use]
     pub fn from_sources(sources: &[(&str, &str)]) -> RuleSet {
+        RuleSet::with_custom(sources, Vec::new())
+    }
+
+    /// Embedded-style sources plus compiled custom rules. The hash covers
+    /// every source text and every custom rule's file text.
+    #[must_use]
+    pub fn with_custom(
+        sources: &[(&str, &str)],
+        mut custom: Vec<super::custom::LoadedRule>,
+    ) -> RuleSet {
+        custom.sort_by(|a, b| a.id.cmp(&b.id));
         let mut hasher = blake3::Hasher::new();
         for (family, text) in sources {
             hasher.update(family.as_bytes());
-            hasher.update(&[0x00]);
+            hasher.update(b"\0");
             hasher.update(text.as_bytes());
-            hasher.update(&[0x00]);
+            hasher.update(b"\0");
+        }
+        hasher.update(b"custom\0");
+        for rule in &custom {
+            hasher.update(rule.id.as_bytes());
+            hasher.update(b"\0");
+            hasher.update(rule.text.as_bytes());
+            hasher.update(b"\0");
         }
         RuleSet {
             corpus: Corpus::from_sources(sources),
+            custom,
             hash: hasher.finalize().to_hex().to_string(),
         }
     }

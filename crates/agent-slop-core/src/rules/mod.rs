@@ -6,6 +6,8 @@
 
 pub mod condition;
 pub mod corpus;
+pub mod custom;
+pub mod generic;
 pub mod lex;
 pub mod paraphrase;
 pub mod suppression;
@@ -25,6 +27,7 @@ pub fn scan_source(cfg: &ResolvedConfig, file: &str, source: &str) -> Vec<Findin
         return Vec::new();
     };
     let corpus = &cfg.ruleset.corpus;
+    let customs = &cfg.ruleset.custom;
     let comments = lang::extract(spec, source);
     let lines: Vec<&str> = source.lines().collect();
     let mut findings = Vec::new();
@@ -58,6 +61,13 @@ pub fn scan_source(cfg: &ResolvedConfig, file: &str, source: &str) -> Vec<Findin
             }
         }
         let paraphrase = paraphrase_block(&comments, idx);
+        for custom in customs {
+            if let Some(finding) =
+                evaluate_custom(cfg, custom, spec.name, file, comment, &block, &lines)
+            {
+                findings.push(finding);
+            }
+        }
         for rule in corpus.rules.values() {
             if rule.meta.severity == "off" && cfg.severity_for(&rule_id(&rule.meta.id)).is_none() {
                 continue;
@@ -80,6 +90,48 @@ pub fn scan_source(cfg: &ResolvedConfig, file: &str, source: &str) -> Vec<Findin
 
 fn rule_id(family: &str) -> String {
     format!("slop/{family}")
+}
+
+/// One custom rule against one comment: scope, severity (`off` skips),
+/// the generic matcher, then line-scoped suppression like any other rule.
+fn evaluate_custom(
+    cfg: &ResolvedConfig,
+    custom: &custom::LoadedRule,
+
+    lang_name: &str,
+    file: &str,
+    comment: &Comment,
+    block: &str,
+    lines: &[&str],
+) -> Option<Finding> {
+    let severity = cfg.severity_for(&custom.id)?;
+    if !generic::applies(&custom.rule, lang_name, file, comment) {
+        return None;
+    }
+    let unit = if generic::is_block(&custom.rule) {
+        block
+    } else {
+        &comment.text
+    };
+    let matched = generic::evaluate(&custom.rule, &custom.regexes, unit)?;
+    let mut finding = Finding {
+        rule: custom.id.clone(),
+        severity,
+        upstream_severity: None,
+        file: file.to_string(),
+        line: comment.line,
+        col: comment.col,
+        end_line: comment.end_line,
+        message: generic::message(&custom.rule, &matched),
+        snippet: comment.text.chars().take(512).collect(),
+        fingerprint: fingerprint(&custom.id, &comment.text),
+        source: Source::Slop,
+        lang: None,
+        suppression: None,
+        fixable: true,
+    };
+    apply_suppression(&mut finding, lines);
+    Some(finding)
 }
 
 fn meta_finding(

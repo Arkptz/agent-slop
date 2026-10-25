@@ -23,6 +23,7 @@ dependencies = [
  "ast-grep-language",
  "blake3",
  "home",
+ "regex",
  "serde",
  "serde_json",
  "toml",

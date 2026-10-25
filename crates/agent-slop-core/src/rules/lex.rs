@@ -257,7 +257,7 @@ fn is_doc_id(tok: &str, section: &MatchSection) -> bool {
 /// Text with inline code spans blanked out. A marker inside backticks is
 /// being QUOTED — `slop/todo-no-condition`, `todo(2026-12-01):` — which is
 /// what documentation about the rule looks like, not debt left in the code.
-fn without_code_spans(s: &str) -> String {
+pub(crate) fn without_code_spans(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut inside = false;
     for c in s.chars() {

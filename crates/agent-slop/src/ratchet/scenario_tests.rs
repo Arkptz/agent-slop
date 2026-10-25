@@ -569,3 +569,79 @@ fn promoting_a_rule_invalidates_the_baseline_cache() {
     );
     assert!(!out.blocked, "a false Stop block");
 }
+
+const CUSTOM_RULE: &str = r##"
+[meta]
+schema = 1
+id = "acme/no-placeholder"
+severity = "warning"
+
+[match]
+kind = "phrase"
+phrases = ["placeholder implementation"]
+word_boundaries = true
+
+[exception]
+shape = "a stub that a test swaps for a fake on purpose"
+
+[note]
+text = "Implement it, or file a TODO that names the condition for removing it."
+
+[[fixture]]
+expect = "hit"
+lang = "python"
+provenance = "acme/repo src/a.py:12"
+source = "# placeholder implementation, later\nx = 1\n"
+
+[[fixture]]
+expect = "miss"
+lang = "python"
+provenance = "acme/repo src/b.py:40"
+source = "# a real implementation\nx = 1\n"
+"##;
+
+/// A promoted custom rule gates like a built-in error: inherited hits are
+/// in the baseline and cancel, a new one blocks.
+#[test]
+fn a_custom_error_rule_blocks_only_when_added() {
+    let s = Scratch::new("custom-error");
+    let hit = "# placeholder implementation, real one later\n";
+    s.write("old.py", &format!("{hit}x = 1\n"));
+    s.write("a.py", CLEAN);
+    s.commit("base");
+    s.pin("sess");
+
+    let mut notes = Vec::new();
+    let rule = agent_slop_core::rules::custom::load_text(
+        CUSTOM_RULE,
+        Path::new("rule.toml"),
+        config::Tier::User,
+        &mut notes,
+    )
+    .expect("rule loads");
+    let mut cfg = config::resolve_with(
+        Some(
+            "[slop]\nmode = \"block\"\n[slop.rules.overrides]\n\"acme/no-placeholder\" = \"error\"\n",
+        ),
+        None,
+        &[rule],
+        Vec::new(),
+    );
+    cfg.mode = Mode::Block;
+
+    s.write("old.py", &format!("{hit}x = 1\ny = 2\n"));
+    let out = s.stop_with(&cfg, "sess");
+    assert_eq!(out.findings.len(), 1, "control: the rule sees the old hit");
+    assert!(
+        out.added.is_empty(),
+        "inherited hit charged: {:?}",
+        out.added
+    );
+    assert!(!out.blocked);
+
+    s.write("a.py", &format!("{hit}x = 1\n"));
+    let out = s.stop_with(&cfg, "sess");
+    assert_eq!(out.blocking.len(), 1, "added: {:?}", out.added);
+    assert_eq!(out.blocking[0].rule, "acme/no-placeholder");
+    assert!(out.blocked);
+}

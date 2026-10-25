@@ -16,6 +16,7 @@ ast-grep-core.workspace = true
 ast-grep-language.workspace = true
 blake3.workspace = true
 home.workspace = true
+regex.workspace = true
 serde.workspace = true
 toml.workspace = true
 unicode-normalization.workspace = true

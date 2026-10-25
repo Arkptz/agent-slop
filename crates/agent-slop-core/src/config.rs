@@ -29,6 +29,7 @@ use serde::de::{Deserializer, MapAccess, Visitor};
 
 use crate::finding::Severity;
 use crate::rules::corpus::RuleSet;
+use crate::rules::custom::{self, LoadedRule};
 
 /// Every rule family v1 knows. A name outside this set in `[slop.rules]`
 /// is reported in `notes` (it looks like intent) but kept — dropping it
@@ -223,6 +224,9 @@ pub struct ResolvedConfig {
     pub exclude: ResolvedExclude,
     pub linters: BTreeMap<String, ResolvedLinter>,
     pub judge: JudgeSettings,
+    /// `[slop.custom] enable`: whether rule files from the user and repo
+    /// rule directories are loaded.
+    pub custom_enabled: bool,
     /// The rules a scan runs against. Compared by identity hash.
     pub ruleset: Arc<RuleSet>,
     pub notes: Vec<ConfigNote>,
@@ -243,15 +247,16 @@ impl ResolvedConfig {
         }
     }
 
-    /// Level of every `slop/*` family plus every full-id override, in id
-    /// order. Together with the ruleset hash this is everything that
-    /// decides which findings a scan can produce.
+    /// Level of every rule id the config knows: `slop/*` families, custom
+    /// ids and full-id overrides, in id order. Together with the ruleset
+    /// hash this is everything that decides which findings a scan can
+    /// produce.
     #[must_use]
     pub fn effective_levels(&self) -> BTreeMap<String, RuleLevel> {
         let mut levels: BTreeMap<String, RuleLevel> = self
             .rules
             .iter()
-            .map(|(family, level)| (format!("slop/{family}"), *level))
+            .map(|(family, level)| (family_id(family), *level))
             .collect();
         levels.extend(
             self.overrides
@@ -261,19 +266,44 @@ impl ResolvedConfig {
         levels
     }
 
+    /// The configured level of a full rule id, keeping `off` distinct from
+    /// an id the config has no entry for: `overrides` first, then the
+    /// family table (`slop/<family>` or a custom `<producer>/<id>`).
+    #[must_use]
+    pub fn level_of(&self, rule_id: &str) -> Option<RuleLevel> {
+        if let Some(level) = self.overrides.get(rule_id) {
+            return Some(*level);
+        }
+        let key = rule_id.strip_prefix("slop/").unwrap_or(rule_id);
+        if key.len() == rule_id.len() && !self.is_custom(rule_id) {
+            return None;
+        }
+        self.rules.get(key).copied()
+    }
+
+    /// Whether `rule_id` names a loaded custom rule.
+    #[must_use]
+    pub fn is_custom(&self, rule_id: &str) -> bool {
+        self.ruleset.custom.iter().any(|c| c.id == rule_id)
+    }
+
     /// Severity for a full rule id: `overrides` first, then the family
-    /// table for `slop/*` ids. `None` means the rule is off or the id is
-    /// foreign and unoverridden — for the latter the caller applies the
-    /// linter's own default, never `error`.
+    /// table for `slop/*` ids and loaded custom ids. `None` means the rule
+    /// is off or the id is foreign and unoverridden — for the latter the
+    /// caller applies the linter's own default, never `error`.
     #[must_use]
     pub fn severity_for(&self, rule_id: &str) -> Option<Severity> {
-        if let Some(level) = self.overrides.get(rule_id) {
-            return level.severity();
-        }
-        rule_id
-            .strip_prefix("slop/")
-            .and_then(|family| self.rules.get(family))
-            .and_then(|level| level.severity())
+        self.level_of(rule_id).and_then(RuleLevel::severity)
+    }
+}
+
+/// The full id of a family-table key: bare families are `slop/*`, a key
+/// already carrying a producer is a custom id.
+fn family_id(key: &str) -> String {
+    if key.contains('/') {
+        key.to_string()
+    } else {
+        format!("slop/{key}")
     }
 }
 
@@ -317,6 +347,7 @@ pub fn builtin_config() -> ResolvedConfig {
         exclude: ResolvedExclude::default(),
         linters: BTreeMap::new(),
         judge: JudgeSettings::default(),
+        custom_enabled: true,
         ruleset: RuleSet::embedded(),
         notes: Vec::new(),
     }
@@ -327,6 +358,27 @@ pub fn builtin_config() -> ResolvedConfig {
 /// reason; it never fails.
 #[must_use]
 pub fn resolve(user: Option<&str>, repo: Option<&str>) -> ResolvedConfig {
+    resolve_with(user, repo, &[], Vec::new())
+}
+
+/// [`resolve`] plus already-loaded custom rules from the user and repo
+/// rule directories. `[slop.custom] enable = false` in any tier drops the
+/// whole layer; a repo rule replaces a user rule of the same id whole.
+#[must_use]
+pub fn resolve_with(
+    user: Option<&str>,
+    repo: Option<&str>,
+    user_rules: &[LoadedRule],
+    repo_rules: Vec<LoadedRule>,
+) -> ResolvedConfig {
+    let mut cfg = resolve_tiers(user, repo);
+    if cfg.custom_enabled {
+        custom::compile(user_rules, repo_rules, &mut cfg);
+    }
+    cfg
+}
+
+fn resolve_tiers(user: Option<&str>, repo: Option<&str>) -> ResolvedConfig {
     let mut cfg = builtin_config();
     let mut notes = Vec::new();
 
@@ -366,13 +418,35 @@ pub fn resolve(user: Option<&str>, repo: Option<&str>) -> ResolvedConfig {
 
 /// Read both tiers from disk. A `NotFound` file is the common case and
 /// records nothing; any other read failure drops that tier with a reason.
+/// Custom rules are read from `rules/` next to the user file and from
+/// `.agent-slop/rules/` next to the repo file.
 #[must_use]
 pub fn load_from_paths(user: Option<&Path>, repo: Option<&Path>) -> ResolvedConfig {
-    let (user, mut notes) = read_tier(user, Tier::User);
-    let (repo, repo_notes) = read_tier(repo, Tier::Repo);
+    let user_dir = user.and_then(|p| p.parent().map(|d| d.join("rules")));
+    let repo_dir = repo.and_then(|p| p.parent().map(|d| d.join(".agent-slop").join("rules")));
+    load_with_rule_dirs(user, repo, user_dir.as_deref(), repo_dir.as_deref())
+}
+
+/// [`load_from_paths`] with the rule directories named explicitly.
+#[must_use]
+pub fn load_with_rule_dirs(
+    user: Option<&Path>,
+    repo: Option<&Path>,
+    user_rules_dir: Option<&Path>,
+    repo_rules_dir: Option<&Path>,
+) -> ResolvedConfig {
+    let (user_text, mut notes) = read_tier(user, Tier::User);
+    let (repo_text, repo_notes) = read_tier(repo, Tier::Repo);
     notes.extend(repo_notes);
 
-    let mut cfg = resolve(user.as_deref(), repo.as_deref());
+    let mut cfg = resolve_tiers(user_text.as_deref(), repo_text.as_deref());
+    if cfg.custom_enabled {
+        let mut discovery = Vec::new();
+        let user_rules = custom::discover(user_rules_dir, Tier::User, &mut discovery);
+        let repo_rules = custom::discover(repo_rules_dir, Tier::Repo, &mut discovery);
+        cfg.notes.extend(discovery);
+        custom::compile(&user_rules, repo_rules, &mut cfg);
+    }
     notes.append(&mut cfg.notes);
     cfg.notes = notes;
     cfg
@@ -440,6 +514,13 @@ struct SlopSection {
     exclude: Option<RawExclude>,
     linters: Option<BTreeMap<String, RawLinter>>,
     judge: Option<RawJudge>,
+    custom: Option<RawCustom>,
+}
+
+/// `[slop.custom]`: the one switch of the custom-rule layer.
+#[derive(Deserialize, Default, Clone, Debug)]
+struct RawCustom {
+    enable: Option<bool>,
 }
 
 /// `[slop.judge]` — every field optional, so a tier that names one key keeps
@@ -559,6 +640,9 @@ fn apply_section(cfg: &mut ResolvedConfig, section: SlopSection) {
         if let Some(scoped) = exclude.scoped {
             cfg.exclude.scoped = scoped;
         }
+    }
+    if let Some(enable) = section.custom.and_then(|c| c.enable) {
+        cfg.custom_enabled = enable;
     }
     if let Some(judge) = section.judge {
         if let Some(enable) = judge.enable {
@@ -1014,7 +1098,7 @@ pub fn excluded(cfg: &ResolvedConfig, rel: &str) -> bool {
 
 /// `vendor/**`, `**/*.generated.*`: the two shapes the config documents.
 /// Anything else is compared literally.
-fn glob_path(pattern: &str, path: &str) -> bool {
+pub(crate) fn glob_path(pattern: &str, path: &str) -> bool {
     if let Some(prefix) = pattern.strip_suffix("/**") {
         return path == prefix || path.starts_with(&format!("{prefix}/"));
     }
