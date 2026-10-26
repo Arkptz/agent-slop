@@ -155,13 +155,18 @@ $ agent-slop scan a.py --format json
 | `bad-response` | stdout is not a valid `Response` |
 | `deadline` | less than 50 ms left on the caller's deadline, or the deadline ran out while the host was folding the response in (the findings read so far are kept) |
 | `no-targets` | no requested file matches the manifest's langs/exts |
+| `baseline-<reason>` | under `scan --since`, the base-side pass of an attributable plugin did not finish (`<reason>` is one of the above, `incomplete` when it was cut while normalising); its findings are reported but none count as added |
 
 Findings past 5 000 per plugin per call are truncated before the host
 reads them, with a skip entry saying so. Every budget is real time: each
 call gets `min(timeout_ms, what is left of the command's deadline − 50 ms)`
 recomputed when it starts (plan §3.4), so one plugin's spend shortens the
 next one's, and a hook leg's 300 ms ceiling covers all of its plugins
-together. A plugin upgrade is picked up without cache surgery: the
+together. Under `scan --since` the head pass may spend at most half of
+what is left when it starts; the base-side pass gets the rest. A plugin
+the host has to kill on a `SIGINT`/`SIGTERM` aimed at itself (terminal
+Ctrl-C, a harness killing the hook's process group) dies with its whole
+group before the host exits. A plugin upgrade is picked up without cache surgery: the
 manifest cache key covers every file in the command line, script
 included.
 
@@ -171,5 +176,6 @@ included.
 exactly like a slop one (plugins have no native mechanism). Under
 `scan --since`, a `deterministic` comments plugin also runs over the
 changed files as they were at the base, so debt the file already carried
-is not charged to the session; file-input or nondeterministic findings are
+is not charged to the session. When that base-side pass does not finish,
+the plugin's findings are reported but none count as added; file-input or nondeterministic findings are
 reported but never counted as added — unattributable debt never blocks.
