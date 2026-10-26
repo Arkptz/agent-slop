@@ -409,6 +409,29 @@ mod tests {
         }
     }
 
+    /// `agent-slop-core` cannot see `ADAPTERS` (the dependency points the
+    /// other way), so its reserved-producer list is a copy. This ties the
+    /// two: a new adapter must be reserved, or a custom rule or plugin
+    /// could claim its `<tool>/<code>` namespace (owner decision Q6).
+    #[test]
+    fn reserved_producers_are_exactly_the_engine_and_the_adapters() {
+        use agent_slop_core::rules::custom::RESERVED_PRODUCERS;
+        let engine = ["slop", "suppression"];
+        let mut expected: Vec<&str> = engine
+            .iter()
+            .copied()
+            .chain(ADAPTERS.iter().map(|a| a.tool))
+            .collect();
+        let mut reserved = RESERVED_PRODUCERS.to_vec();
+        expected.sort_unstable();
+        reserved.sort_unstable();
+        assert_eq!(
+            reserved, expected,
+            "RESERVED_PRODUCERS (core rules/custom.rs) and ADAPTERS drifted: \
+             reserve every adapter's `tool`, and nothing else but the engine's own"
+        );
+    }
+
     #[test]
     fn auto_never_selects_an_adapter_that_evaluates_repo_code() {
         let cfg = builtin_config();

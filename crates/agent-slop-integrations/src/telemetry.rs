@@ -446,9 +446,11 @@ pub fn emit(input: &RowInput, root: Option<&Path>) -> Option<PathBuf> {
     write(&build(input), root)
 }
 
-/// One `O_APPEND` write of a single line under the page size is atomic on
-/// Linux, which is the same guarantee the shell writers get from their
-/// `printf >>` under `flock`: two writers never interleave a row.
+/// One `O_APPEND` write of the line and its newline together. `writeln!`
+/// would issue two `write(2)` calls and let another writer's bytes land
+/// between them, so the row is assembled first and written whole: two
+/// writers then never interleave a row, the same guarantee the shell
+/// writers get from their `printf >>` under `flock`.
 fn append_line(path: &Path, line: &str) -> Option<()> {
     use std::io::Write;
     let mut file = std::fs::OpenOptions::new()
@@ -456,13 +458,47 @@ fn append_line(path: &Path, line: &str) -> Option<()> {
         .append(true)
         .open(path)
         .ok()?;
-    writeln!(file, "{line}").ok()
+    let mut row = String::with_capacity(line.len() + 1);
+    row.push_str(line);
+    row.push('\n');
+    file.write_all(row.as_bytes()).ok()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use agent_slop_core::finding::{Severity, Source, Suppression};
+
+    /// Concurrent appenders never tear a row: one `write_all` of the line
+    /// and its newline is one `O_APPEND` write, whereas `writeln!` issues
+    /// two and lets another writer's bytes land between them.
+    #[test]
+    fn concurrent_appenders_never_tear_a_row() {
+        let dir = std::env::temp_dir().join(format!("agent-slop-torn-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        let path = dir.join("shard.jsonl");
+        let (writers, rows) = (8usize, 300usize);
+        std::thread::scope(|scope| {
+            for w in 0..writers {
+                let path = &path;
+                scope.spawn(move || {
+                    let pad = "x".repeat(780);
+                    for i in 0..rows {
+                        let line = format!("{{\"w\":{w},\"i\":{i},\"pad\":\"{pad}\"}}");
+                        append_line(path, &line).expect("append");
+                    }
+                });
+            }
+        });
+        let text = std::fs::read_to_string(&path).expect("read");
+        let _ = std::fs::remove_dir_all(&dir);
+        let parsed = text
+            .lines()
+            .filter(|l| serde_json::from_str::<serde_json::Value>(l).is_ok())
+            .count();
+        assert_eq!(parsed, writers * rows, "torn or merged rows in the shard");
+        assert!(text.ends_with('\n'));
+    }
 
     fn finding(rule: &str, line: u32, suppression: Option<Suppression>) -> Finding {
         Finding {
