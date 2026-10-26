@@ -183,7 +183,7 @@ fn the_nix_user_tier_alone_passes() {
 /// A tune that strips a frozen blocking family's phrases weakens the gate
 /// exactly like a demotion, and must fail the same way.
 #[test]
-fn removing_a_frozen_familys_phrases_by_tune_fails() {
+fn removing_a_frozen_families_phrases_by_tune_fails() {
     let s = Scratch::new("tune-weaken");
     s.user_tier("[slop.tune.comment-history]\nphrases_remove = [\"previously\"]\n");
     let (code, text) = s.run();
@@ -197,7 +197,7 @@ fn removing_a_frozen_familys_phrases_by_tune_fails() {
 /// Extending a frozen family's list only adds matches: reported, not
 /// failed.
 #[test]
-fn extending_a_frozen_familys_phrases_is_info_not_failure() {
+fn extending_a_frozen_families_phrases_is_info_not_failure() {
     let s = Scratch::new("tune-extend");
     s.user_tier("[slop.tune.comment-history]\nphrases_extend = [\"back then\"]\n");
     let (code, text) = s.run();
