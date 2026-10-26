@@ -203,6 +203,11 @@ pub struct PluginRun {
     /// deterministic `input = "comments"` manifest. Everything else is
     /// reported but never counted as added.
     pub attributable: BTreeSet<String>,
+    /// Plugins whose call reached a definite answer: it ran to the end
+    /// uncut (no truncation, no deadline while normalising) or had no
+    /// matching file. A baseline built from a plugin outside this set is
+    /// incomplete and cannot be compared against.
+    pub settled: BTreeSet<String>,
     /// Findings of the baseline pass (the same plugins over the files as
     /// they were at the comparison ref); the caller folds their
     /// fingerprints into the baseline multiset.
@@ -269,6 +274,7 @@ pub fn run(
         let mine = parse_targets(&manifest, targets);
         if mine.is_empty() {
             result.skip(name, "no-targets");
+            result.settled.insert(name.clone());
             continue;
         }
         // What `describe` spent is gone: the check call gets what is left.
@@ -322,6 +328,9 @@ pub fn run(
             });
         }
         result.status.insert(name.clone(), status.text());
+        if !truncated && !status.partial {
+            result.settled.insert(name.clone());
+        }
         if manifest.input == Input::Comments && manifest.deterministic {
             result.attributable.insert(name.clone());
         }

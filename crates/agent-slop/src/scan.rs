@@ -335,38 +335,55 @@ pub(crate) fn run(cfg: &ResolvedConfig, args: &ScanArgs, cwd: &Path, git: bool) 
 
 /// The plugin host over the scan's named files. `--plugins` mirrors
 /// `--linters`; the stage is `Scan`, or `Check` for `agent-slop check` — the
-/// Stop gate never runs plugins. Under `--since`, a deterministic comment plugin also runs over
-/// the changed files as they were at the base, so its inherited findings
-/// sit in the baseline instead of counting as added (D3's spirit).
+/// Stop gate never runs plugins. Under `--since`, a deterministic comment
+/// plugin also runs over the changed files as they were at the base, so its
+/// inherited findings sit in the baseline instead of counting as added
+/// (D3's spirit).
+///
+/// The two passes split the deadline: the head pass may spend at most half
+/// of what is left when it starts, the baseline pass gets everything the
+/// head pass did not use. A plugin whose baseline pass did not run to the
+/// end is not attributable: its findings are reported, never counted as
+/// added, and the skip is surfaced as `baseline-<reason>`.
 fn run_plugins(
     cfg: &ResolvedConfig,
     plugins_arg: Option<&str>,
     ctx: &PluginCtx<'_>,
     contents: &[(String, String)],
 ) -> agent_slop_integrations::plugins::PluginRun {
-    use agent_slop_integrations::plugins::{DescribeCache, Opts, Selection, run};
+    use agent_slop_integrations::plugins::{DescribeCache, Opts, Selection, Skipped, run};
     let selection = plugins_arg.map_or(Selection::Auto, Selection::parse);
     let cache = DescribeCache::from_env();
+    let baseline_pass = ctx.repo.zip(ctx.base);
+    let head_deadline = if baseline_pass.is_some() {
+        half_of_remaining(ctx.deadline)
+    } else {
+        ctx.deadline
+    };
     let mut plugins = run(
         cfg,
         &Opts {
             selection: &selection,
             stage: ctx.stage,
-            deadline: ctx.deadline,
+            deadline: head_deadline,
         },
         ctx.root,
         contents,
         &cache,
     );
-    if let (Some(repo), Some(base)) = (ctx.repo, ctx.base)
+    if let Some((repo, base)) = baseline_pass
         && !plugins.attributable.is_empty()
     {
         let blobs: Vec<(String, String)> = contents
             .iter()
             .filter_map(|(p, _)| repo.show(base, p).map(|c| (p.clone(), c)))
             .collect();
+        // No file existed at the base: there is nothing inherited to find.
+        if blobs.is_empty() {
+            return plugins;
+        }
         let narrow = Selection::Named(plugins.attributable.iter().cloned().collect());
-        plugins.baseline = run(
+        let baseline = run(
             cfg,
             &Opts {
                 selection: &narrow,
@@ -376,10 +393,36 @@ fn run_plugins(
             ctx.root,
             &blobs,
             &cache,
-        )
-        .findings;
+        );
+        for name in std::mem::take(&mut plugins.attributable) {
+            if baseline.settled.contains(&name) {
+                plugins.attributable.insert(name);
+                continue;
+            }
+            let reason = baseline
+                .skipped
+                .iter()
+                .find(|s| s.tool == name)
+                .map_or("incomplete", |s| s.reason.as_str());
+            plugins.skipped.push(Skipped {
+                reason: format!("baseline-{reason}"),
+                tool: name,
+            });
+        }
+        plugins.baseline = baseline.findings;
     }
     plugins
+}
+
+/// The instant halfway between now and `deadline` (the deadline itself when
+/// it has passed or there is none).
+fn half_of_remaining(deadline: Option<Instant>) -> Option<Instant> {
+    let deadline = deadline?;
+    let now = Instant::now();
+    Some(
+        now.checked_add(deadline.saturating_duration_since(now) / 2)
+            .unwrap_or(deadline),
+    )
 }
 
 /// What the plugin pass needs to know about where the scan runs.

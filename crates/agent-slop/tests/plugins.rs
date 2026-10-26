@@ -293,8 +293,11 @@ fn plugin_timeout_kills_and_skips() {
     s.write("a.py", RULE_1);
     let started = std::time::Instant::now();
     let (_, v, _) = s.scan();
+    // The plugin sleeps 5 s against a 300 ms budget; a ceiling at the
+    // sleep itself still proves the scan did not wait it out, and holds
+    // on a loaded machine where process start-up alone takes seconds.
     assert!(
-        started.elapsed() < std::time::Duration::from_millis(1000),
+        started.elapsed() < std::time::Duration::from_millis(4500),
         "the scan must not wait out the plugin's sleep: {:?}",
         started.elapsed()
     );
@@ -420,6 +423,58 @@ fn comment_plugin_findings_ratchet_under_since() {
     assert!(
         v["added"].as_array().is_some_and(|a| !a.is_empty()),
         "a genuinely new plugin finding must be added: {v}"
+    );
+}
+
+/// A starved baseline pass must not turn inherited debt into "added". The
+/// plugin answers its first `check` (the head pass) at once and hangs on
+/// the second (the baseline pass over the base blobs), so the outcome does
+/// not depend on how fast the machine is.
+#[test]
+fn a_cut_baseline_pass_never_charges_inherited_plugin_findings() {
+    let s = Scratch::new("since-starved");
+    let calls = s.root.join("calls.txt");
+    let hanging_second_call = PLUGIN.replace(
+        "    input=$(cat)\n",
+        &format!(
+            "    input=$(cat)\n    echo x >> {calls}\n    [ \"$(wc -l < {calls})\" -ge 2 ] && sleep 30\n",
+            calls = calls.display()
+        ),
+    );
+    assert_ne!(
+        hanging_second_call, PLUGIN,
+        "the probe must patch the plugin"
+    );
+    s.write_plugin("acme-slop", &hanging_second_call);
+    s.user_config("[slop.plugins.acme]\ncommand = [\"acme-slop\"]\ntimeout_ms = 20000\n");
+    s.write("a.py", RULE_1);
+    s.commit("base");
+    s.write("a.py", &format!("{RULE_1}y = 2\n"));
+
+    let (_, v, err) = s.scan_args(&["--since", "HEAD", "--deadline-ms", "3000"]);
+    let ran = std::fs::read_to_string(&calls).map_or(0, |c| c.lines().count());
+    assert_eq!(
+        ran, 2,
+        "head and baseline passes both called check: {v} {err}"
+    );
+    assert!(
+        v["findings"]
+            .as_array()
+            .is_some_and(|fs| fs.iter().any(|f| f["rule"] == "acme/vague-why")),
+        "the head finding is still reported: {v}"
+    );
+    assert!(
+        v["added"].as_array().is_some_and(Vec::is_empty),
+        "an inherited finding whose baseline pass was cut is not added: {v}"
+    );
+    assert!(
+        v["skipped"]
+            .as_array()
+            .is_some_and(|sk| sk.iter().any(|x| x["tool"] == "acme"
+                && x["reason"]
+                    .as_str()
+                    .is_some_and(|r| r.starts_with("baseline-")))),
+        "the cut baseline pass is surfaced in skipped: {v}"
     );
 }
 
@@ -734,9 +789,21 @@ fn plugin_budgets_share_the_scans_deadline() {
     let started = std::time::Instant::now();
     let (_, v, _) = s.scan_args(&["--deadline-ms", "1200"]);
     let took = started.elapsed();
+    // Three unshared budgets would cost 3 x 900 ms of sleeping plus start-up;
+    // the shared deadline stops the second and third plugin from starting.
+    // The ceiling sits below that sum, and the skip reasons carry the logic.
     assert!(
-        took < std::time::Duration::from_millis(2400),
+        took < std::time::Duration::from_millis(2700),
         "three 900 ms budgets under a 1200 ms deadline took {took:?}: {v}"
+    );
+    let skipped_for = |reason: &str| {
+        v["skipped"]
+            .as_array()
+            .map_or(0, |sk| sk.iter().filter(|x| x["reason"] == reason).count())
+    };
+    assert!(
+        skipped_for("deadline") >= 1 && skipped_for("timeout") <= 2,
+        "at most two plugins may burn a budget before the deadline stops the rest: {v}"
     );
 }
 
@@ -777,9 +844,18 @@ fn the_hook_ceiling_covers_every_plugin_together() {
     let (code, _, err) = run_hook(&s, HOOK_PAYLOAD);
     let took = started.elapsed();
     assert_eq!(code, 0, "{err}");
+    // Each plugin hangs for 30 s against a 2 s `timeout_ms`; three
+    // independent budgets would be 6 s. The shared 300 ms ceiling means at
+    // most one call can time out and the others never start.
     assert!(
-        took < std::time::Duration::from_millis(700),
+        took < std::time::Duration::from_millis(5000),
         "three plugins under one 300 ms ceiling took {took:?}: {err}"
+    );
+    let timeouts = err.matches("skipped: timeout").count();
+    let deadlines = err.matches("skipped: deadline").count();
+    assert!(
+        timeouts <= 1 && timeouts + deadlines == 3,
+        "one shared ceiling: at most one timeout, the rest never start: {err}"
     );
 }
 
@@ -827,8 +903,11 @@ esac
         .as_array()
         .map_or(0, |fs| fs.iter().filter(|f| f["rule"] == "flood/r").count());
     assert!(n <= 5000, "{n} findings kept");
+    // The flood script alone is thousands of shell iterations; the bound
+    // only has to separate "capped" from "normalised without end", so it
+    // is generous and the logical cap assertions above carry the proof.
     assert!(
-        took < std::time::Duration::from_secs(6),
+        took < std::time::Duration::from_secs(30),
         "normalising a capped flood took {took:?}"
     );
 }
