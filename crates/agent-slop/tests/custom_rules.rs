@@ -170,6 +170,30 @@ fn test_exits_1_when_a_fixture_is_red() {
     assert!(text.contains("expected a miss"), "{text}");
 }
 
+/// A hit fixture the rule does not fire on is red for `rules lint` AND
+/// `rules test`, both with the "expected a hit" detail — with a miss
+/// fixture present, so lint cannot be failing for the missing-kind reason.
+#[test]
+fn a_red_hit_fixture_fails_lint_and_test() {
+    let s = Scratch::new("red-hit");
+    s.user_rule(
+        "no-placeholder.toml",
+        &RULE.replace(
+            "# placeholder implementation, later",
+            "# nothing matching here",
+        ),
+    );
+    let (code, text) = s.run(&["rules", "lint"]);
+    assert_eq!(code, 1, "{text}");
+    assert!(text.contains("fixture 1 (hit)"), "{text}");
+    assert!(text.contains("expected a hit"), "{text}");
+    assert!(!text.contains("no miss fixture"), "{text}");
+    assert!(!text.contains("no hit fixture"), "{text}");
+    let (code, text) = s.run(&["rules", "test"]);
+    assert_eq!(code, 1, "{text}");
+    assert!(text.contains("expected a hit"), "{text}");
+}
+
 #[test]
 fn named_files_are_linted_instead_of_the_tiers() {
     let s = Scratch::new("named");

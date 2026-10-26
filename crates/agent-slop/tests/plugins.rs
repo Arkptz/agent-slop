@@ -832,3 +832,148 @@ esac
         "normalising a capped flood took {took:?}"
     );
 }
+
+/// The scrubbed environment: a parent secret never reaches the plugin, a
+/// user-tier `env_passthrough` does, and a repo-tier one is refused.
+#[test]
+fn the_plugin_environment_is_scrubbed_and_passthrough_is_user_only() {
+    let s = Scratch::new("env");
+    let dump = s.root.join("env.txt");
+    s.write_plugin(
+        "env-slop",
+        &format!(
+            r#"#!/bin/sh
+case "$1" in
+  describe) echo '{{"protocol":1,"name":"envp","version":"1","input":"comments","cost":"A","rules":[{{"id":"r","default_level":"warning"}}]}}' ;;
+  check) cat >/dev/null; env > {dump}; echo '{{"protocol":1,"findings":[]}}' ;;
+esac
+"#,
+            dump = dump.display()
+        ),
+    );
+    s.user_config(
+        "[slop.plugins.envp]\ncommand = [\"env-slop\"]\nenv_passthrough = [\"USER_PASSED\"]\n",
+    );
+    s.repo_config("[slop.plugins.envp]\nenv_passthrough = [\"REPO_WANTED\"]\n");
+    s.write("a.py", "# a comment\nx = 1\n");
+    let extra = [
+        ("PARENT_SECRET", "hunter2"),
+        ("USER_PASSED", "yes"),
+        ("REPO_WANTED", "leaked"),
+    ];
+    let (_, out, err) = s.run_with_env(&["scan", "--format", "json"], &extra);
+    let env = std::fs::read_to_string(&dump).unwrap_or_else(|e| panic!("{e}: {out} {err}"));
+    assert!(
+        !env.contains("PARENT_SECRET"),
+        "the parent env leaked:\n{env}"
+    );
+    assert!(
+        env.contains("USER_PASSED=yes"),
+        "a user-tier passthrough is forwarded:\n{env}"
+    );
+    assert!(
+        !env.contains("REPO_WANTED"),
+        "a repo-tier passthrough must be refused:\n{env}"
+    );
+    assert!(
+        err.contains("env_passthrough ignored: only the user tier may set it"),
+        "{err}"
+    );
+    assert!(
+        env.contains("PATH="),
+        "the allowlist still holds PATH:\n{env}"
+    );
+}
+
+/// A manifest whose `name` differs from the configured key is skipped
+/// before it can run.
+#[test]
+fn a_manifest_name_that_differs_from_the_key_is_skipped() {
+    let s = Scratch::new("name");
+    s.write_plugin("liar-slop", &leveled_plugin("someone-else", "warning"));
+    s.user_config("[slop.plugins.liar]\ncommand = [\"liar-slop\"]\n");
+    s.write("a.py", "# a comment\nx = 1\n");
+    let (_, v, _) = s.scan();
+    assert!(
+        v["skipped"]
+            .as_array()
+            .is_some_and(|sk| sk.iter().any(|x| x["tool"] == "liar"
+                && x["reason"]
+                    .as_str()
+                    .is_some_and(|r| r.starts_with("name-mismatch")))),
+        "{v}"
+    );
+    assert!(
+        v["findings"]
+            .as_array()
+            .is_none_or(|fs| fs.iter().all(|f| f["source"]["tool"] != "liar")),
+        "a mismatched plugin must not run: {v}"
+    );
+}
+
+fn cost_plugin(name: &str, cost: &str) -> String {
+    leveled_plugin(name, "warning").replace(r#""cost":"A""#, &format!(r#""cost":"{cost}""#))
+}
+
+/// Cost classes: the hook runs class A only; `scan` runs A–C and D only
+/// when the plugin is named.
+#[test]
+fn cost_classes_gate_the_stage() {
+    let s = Scratch::new("cost");
+    s.write_plugin("bee-slop", &cost_plugin("bee", "B"));
+    s.write_plugin("dee-slop", &cost_plugin("dee", "D"));
+    s.user_config(
+        "[slop.plugins.bee]\ncommand = [\"bee-slop\"]\n\n[slop.plugins.dee]\ncommand = [\"dee-slop\"]\n",
+    );
+    s.write("a.py", "# a comment\nx = 1\n");
+
+    let (_, out, err) = run_hook(&s, HOOK_PAYLOAD);
+    assert!(
+        !out.contains("bee/r"),
+        "a class B plugin ran in a hook: {out}"
+    );
+    assert!(err.contains("plugin bee skipped: cost"), "{err}");
+
+    let (_, v, _) = s.scan();
+    let has = |v: &serde_json::Value, rule: &str| {
+        v["findings"]
+            .as_array()
+            .is_some_and(|fs| fs.iter().any(|f| f["rule"] == rule))
+    };
+    assert!(has(&v, "bee/r"), "class B runs in scan: {v}");
+    assert!(!has(&v, "dee/r"), "class D needs naming: {v}");
+    let (_, v, _) = s.scan_args(&["--plugins", "dee"]);
+    assert!(has(&v, "dee/r"), "a named class D plugin runs: {v}");
+}
+
+/// Only a deterministic comment plugin can be attributed to a baseline: a
+/// nondeterministic one's NEW finding is reported but never "added".
+#[test]
+fn a_nondeterministic_plugin_is_never_attributed() {
+    let s = Scratch::new("nondet");
+    s.write_plugin(
+        "acme-slop",
+        &PLUGIN.replace(r#""deterministic":true,"#, r#""deterministic":false,"#),
+    );
+    s.user_config("[slop.plugins.acme]\ncommand = [\"acme-slop\"]\n");
+    s.write("a.py", "x = 1\n");
+    s.commit("base");
+    s.write("b.py", RULE_1);
+    let (_, v, _) = s.scan_args(&["--since", "HEAD"]);
+    assert!(
+        v["findings"]
+            .as_array()
+            .is_some_and(|fs| fs.iter().any(|f| f["rule"] == "acme/vague-why")),
+        "reported: {v}"
+    );
+    assert!(
+        v["added"].as_array().is_some_and(|a| a.iter().all(|fp| {
+            v["findings"].as_array().is_some_and(|fs| {
+                fs.iter()
+                    .filter(|f| f["fingerprint"] == *fp)
+                    .all(|f| f["rule"] != "acme/vague-why")
+            })
+        })),
+        "a nondeterministic plugin finding must not count as added: {v}"
+    );
+}

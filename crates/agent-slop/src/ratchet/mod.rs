@@ -982,6 +982,38 @@ mod tests {
         }
     }
 
+    /// A custom rule's TEXT is part of the key: editing a phrase changes
+    /// what the rule reports without changing its id or level, and a key
+    /// that missed it would keep serving fingerprints from the old rule.
+    #[test]
+    fn editing_a_custom_rule_text_changes_the_ruleset_version() {
+        use agent_slop_core::rules::custom::load_text;
+        const RULE: &str = "[meta]\nschema = 1\nid = \"acme/x\"\nseverity = \"warning\"\n\n\
+            [match]\nkind = \"phrase\"\nphrases = [\"stub body\"]\n";
+        let version = |text: &str| {
+            let mut notes = Vec::new();
+            let rule = load_text(
+                text,
+                std::path::Path::new("x.toml"),
+                agent_slop_core::config::Tier::User,
+                &mut notes,
+            )
+            .expect("loads");
+            ruleset_version(&agent_slop_core::config::resolve_with(
+                None,
+                None,
+                &[rule],
+                Vec::new(),
+            ))
+        };
+        assert_eq!(version(RULE), version(RULE), "stable");
+        assert_ne!(
+            version(RULE),
+            version(&RULE.replace("stub body", "placeholder body")),
+            "editing a custom rule's phrase left the cache key unchanged"
+        );
+    }
+
     /// A tune alters what a scan can report, so it must move the cache key
     /// even though no embedded text or rule level changed.
     #[test]
