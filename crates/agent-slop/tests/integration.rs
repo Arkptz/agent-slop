@@ -170,6 +170,21 @@ fn committed_slop_does_not_block() {
     s.hook(&stop(sid)).assert_rc(0, "Stop over inherited debt");
 }
 
+/// Grok's normal turn-end Stop carries `reason: "end_turn"` — the scan
+/// must still run and block. A regression here flips precondition 2 and
+/// silences the gate on every ordinary turn (POL-026).
+#[test]
+fn an_end_turn_stop_still_blocks_added_slop() {
+    let s = Scratch::new("end-turn");
+    let sid = "scenario-end-turn";
+    s.hook(&session_start(sid)).assert_rc(0, "SessionStart");
+    s.write("a.py", &format!("{SLOP}{CLEAN}"));
+    let r = s.hook(&format!(
+        r#"{{"hook_event_name":"Stop","session_id":"{sid}","reason":"end_turn"}}"#
+    ));
+    r.assert_rc(2, "an end_turn Stop is a turn Stop, not a session end");
+}
+
 /// SPEC-006 "A newly added error finding blocks": the same fixture,
 /// written after the pin.
 #[test]

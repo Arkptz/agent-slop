@@ -63,7 +63,7 @@ pub struct Finding {
 
 /// Longest-first: `//` would otherwise eat the first half of `///`, `//!`,
 /// `/*` and `/**`, leaving a stray `/` or `*` in the payload.
-const LEADING_MARKERS: [&str; 8] = ["/**", "///", "//!", "//", "/*", "#", "--", ";"];
+pub(crate) const LEADING_MARKERS: [&str; 8] = ["/**", "///", "//!", "//", "/*", "#", "--", ";"];
 
 /// Returns the payload and whether a block form was opened: the closing
 /// `*/` is stripped only as the counterpart of an opened block, so `x */`

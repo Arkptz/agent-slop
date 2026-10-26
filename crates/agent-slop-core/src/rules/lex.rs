@@ -8,12 +8,12 @@
 
 use super::corpus::MatchSection;
 
-/// The comment payload: anchored marker strip (the same `LEADING_MARKERS`
-/// table as `finding::normalize`, restated here because it is private
-/// there — the values must stay in sync).
+/// The comment payload: anchored marker strip. The marker table mirrors
+/// `finding::LEADING_MARKERS`; a test pins the two together.
+const MARKERS: [&str; 8] = ["/**", "///", "//!", "//", "/*", "#", "--", ";"];
+
 #[must_use]
 pub fn payload(text: &str) -> &str {
-    const MARKERS: [&str; 8] = ["/**", "///", "//!", "//", "/*", "#", "--", ";"];
     let mut s = text.trim_start();
     while let Some(m) = MARKERS.iter().find(|m| s.starts_with(**m)) {
         s = &s[m.len()..];
@@ -322,6 +322,15 @@ pub fn has_referent(text: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    /// finding.rs and this module each declare the marker table; the
+    /// strip must not drift (the tables are not one constant).
+    #[test]
+    fn the_marker_table_matches_findings() {
+        use super::MARKERS;
+        use crate::finding::LEADING_MARKERS;
+        assert_eq!(MARKERS, LEADING_MARKERS);
+    }
+
     use super::*;
 
     fn section(phrases: &[&str], markers: &[&str], anchored: &[&str]) -> MatchSection {

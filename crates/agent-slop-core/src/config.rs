@@ -1241,6 +1241,16 @@ select = ["ERA001"]
         );
     }
 
+    /// Undocumented-shape fallback: the star crosses directory boundaries.
+    #[test]
+    fn star_fallback_crosses_directory_boundaries() {
+        assert!(glob_path("*.py", "src/a.py"));
+        assert!(glob_path("tests/*.py", "tests/sub/b.py"));
+        assert!(!glob_path("*.py", "src/a.rs"));
+        // The documented shapes stay segment-honest.
+        assert!(!glob_path("vendor/**", "vendorx/a.rs"));
+    }
+
     #[test]
     fn severity_resolution_routes_overrides_families_and_off() {
         let cfg = resolve(
@@ -1362,7 +1372,8 @@ pub fn excluded(cfg: &ResolvedConfig, rel: &str) -> bool {
 }
 
 /// `vendor/**`, `**/*.generated.*`: the two shapes the config documents.
-/// Anything else is compared literally.
+/// Anything else is matched with `*` as any run of characters — the star
+/// also crosses `/`, which only the two documented shapes avoid.
 pub(crate) fn glob_path(pattern: &str, path: &str) -> bool {
     if let Some(prefix) = pattern.strip_suffix("/**") {
         return path == prefix || path.starts_with(&format!("{prefix}/"));

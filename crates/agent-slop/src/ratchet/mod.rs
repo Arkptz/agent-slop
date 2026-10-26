@@ -204,10 +204,6 @@ fn skip_reason(root: &Path, rel: &str) -> Option<&'static str> {
     None
 }
 
-fn is_binary(content: &[u8]) -> bool {
-    content.iter().take(8000).any(|b| *b == 0)
-}
-
 /// Identity of everything that decides which fingerprints a scan yields:
 /// the package version, the ruleset (every embedded rule text) and the
 /// effective level of every rule id. Level changes matter because a rule
@@ -367,7 +363,7 @@ pub(crate) fn scan_worktree(
             });
             continue;
         };
-        if is_binary(&bytes) {
+        if crate::scan::is_binary(&bytes) {
             skipped.push(SkippedPath {
                 path: path.clone(),
                 reason: "binary",

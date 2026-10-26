@@ -395,19 +395,12 @@ fn needs_advice(cfg: &ResolvedConfig, cwd: &std::path::Path, rel: &str) -> Vec<S
     agent_slop_integrations::judge::needs(
         cfg,
         &chunks,
-        &repo_name(&repo.root),
+        &agent_slop_integrations::judge::repo_name(&repo.root),
         deadline(cfg).unwrap_or_else(Instant::now),
     )
     .iter()
     .map(agent_slop_integrations::judge::NeedsHit::render)
     .collect()
-}
-
-fn repo_name(root: &std::path::Path) -> String {
-    root.file_name().map_or_else(
-        || String::from("repo"),
-        |n| n.to_string_lossy().into_owned(),
-    )
 }
 
 /// Pin the baseline. Always exit 0, nothing on stdout: `SessionStart` cannot

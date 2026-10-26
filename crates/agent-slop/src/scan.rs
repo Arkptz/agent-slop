@@ -67,7 +67,7 @@ fn severity_kept(min: Option<Severity>, severity: Severity) -> bool {
     }
 }
 
-fn is_binary(bytes: &[u8]) -> bool {
+pub(crate) fn is_binary(bytes: &[u8]) -> bool {
     bytes.iter().take(8000).any(|b| *b == 0)
 }
 
@@ -569,6 +569,24 @@ pub(crate) fn envelope(report: &Report) -> String {
 mod tests {
     use super::*;
     use agent_slop_core::config::builtin_config;
+
+    #[test]
+    fn severity_kept_orders_error_warning_hint() {
+        assert!(severity_kept(None, Severity::Hint));
+        assert!(!severity_kept(Some(Severity::Warning), Severity::Hint));
+        assert!(severity_kept(Some(Severity::Warning), Severity::Warning));
+        assert!(!severity_kept(Some(Severity::Error), Severity::Warning));
+        assert!(severity_kept(Some(Severity::Error), Severity::Error));
+    }
+
+    #[test]
+    fn excluded_honours_configured_paths() {
+        let mut cfg = agent_slop_core::config::builtin_config();
+        cfg.exclude.paths = vec!["vendor/**".into()];
+        assert!(agent_slop_core::config::excluded(&cfg, "vendor"));
+        assert!(agent_slop_core::config::excluded(&cfg, "vendor/x/y.rs"));
+        assert!(!agent_slop_core::config::excluded(&cfg, "src/main.rs"));
+    }
 
     const SLOP: &str = "# We previously always sent a Referer — that was a bug.\nreferer = None\n";
 
