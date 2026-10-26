@@ -1,17 +1,171 @@
+<div align="center">
+
 # agent-slop
 
-A deterministic, AST-based linter for AI-agent comment slop, with a
-ratcheting Stop gate for coding-agent sessions. agent-slop parses your
-source with tree-sitter grammars (via `ast-grep`), extracts comments and
-docstrings, and matches them against a reviewed corpus of phrase lists,
-anchored markers and structural checks. It tells an AI agent — in its own
-hook protocol — that "we previously sent a Referer" is not documentation.
+**A deterministic linter for the comments AI coding agents leave behind, with a ratcheting Stop gate for agent sessions.**
 
 [![CI](https://github.com/Arkptz/agent-slop/actions/workflows/ci.yml/badge.svg)](https://github.com/Arkptz/agent-slop/actions/workflows/ci.yml)
-[![docs.rs](https://img.shields.io/docsrs/agent_slop)](https://docs.rs/agent_slop)
-[![crates.io](https://img.shields.io/crates/v/agent_slop.svg)](https://crates.io/crates/agent_slop)
-[![MSRV](https://img.shields.io/crates/msrv/agent_slop.svg)](Cargo.toml)
+[![Docs](https://github.com/Arkptz/agent-slop/actions/workflows/docs.yml/badge.svg)](https://github.com/Arkptz/agent-slop/actions/workflows/docs.yml)
+[![MSRV](https://img.shields.io/badge/MSRV-1.95-orange.svg)](Cargo.toml)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
+
+</div>
+
+```text
+$ agent-slop check demo.py
+demo.py:1:1 slop/comment-history — change-history residue 'previously' — narrates the edit, not the code
+demo.py:4:1 slop/todo-no-condition — TODO with no removal condition — name one or delete it
+```
+
+## Why
+
+Coding agents write comments for the reviewer of the current session, not
+for the next reader of the file: "we previously sent a Referer here",
+"for now", "as requested", a docstring that repeats the function name, a
+TODO nobody will ever be able to close. agent-slop finds that residue
+with tree-sitter (through `ast-grep`) and a reviewed phrase corpus, so the
+same input always gives the same findings and no model sits in the loop.
+Run as a harness hook, it tells the agent about the problem in the
+agent's own protocol and blocks the session only when the session itself
+added an error.
+
+## Quick start
+
+```sh
+nix run github:Arkptz/agent-slop -- scan                # whole repository
+nix run github:Arkptz/agent-slop -- scan --since main   # only what this branch changed
+```
+
+## What it does
+
+- **Sixteen rule families** for comment slop: change history, session
+  meta, review jargon, comments that restate the code, TODOs without a
+  removal condition, unsourced performance and constraint claims, hedging,
+  step narration, and more. Each rule has a page with bad and good
+  examples in the [rule reference](mdbook/guide/rules/index.md).
+- **Twelve languages**: Rust, Java, Python, Go, TypeScript, TSX,
+  JavaScript, Bash, Nix, C, C++ and YAML. Most phrase lists cover English
+  and Russian.
+- **A ratchet, not an audit.** The `SessionStart` hook pins a baseline,
+  `Stop` compares against it and, in `block` mode, exits 2 only for
+  errors the session added. Existing debt never blocks.
+- **Fail-open everywhere.** No git, a broken config tier or an expired
+  deadline degrades the scan; it never turns into a failed session.
+- **Suppressions with a referent.** `agent-slop: allow <rule> -- <reason>`
+  is accepted only when the reason names something checkable: a URL, a
+  decision-doc id, an issue, a path or a date.
+- **Extensible without forking**: custom TOML rules with fixtures that run
+  through the real engine, tuning of the built-in phrase lists, and
+  external plugins over a JSON-on-stdio protocol.
+
+## How it compares
+
+| | agent-slop | general linters (clippy, ruff, eslint) | an LLM reviewer |
+|---|---|---|---|
+| Looks at comment wording | yes | style and spelling only | yes |
+| Same input, same result | yes | yes | no |
+| Blocks only what a session added | yes (ratchet) | no | no |
+| Runs inside the agent's hook loop | yes | through wrappers | rarely |
+| Cost per run | local, milliseconds | local | tokens and latency |
+
+agent-slop sits next to your existing linters: it imports ruff, clippy,
+deadnix, statix, govet and tsc findings into the same report and ratchet.
+
+## Installation
+
+<details>
+<summary><b>Nix flake / home-manager</b></summary>
+
+```nix
+# flake.nix inputs
+agent-slop.url = "github:Arkptz/agent-slop";
+
+# home-manager
+imports = [ inputs.agent-slop.homeManagerModules.default ];
+programs.agent-slop = {
+  enable = true;
+  hooks.grok.enable = true;
+  hooks.claude.enable = true; # exposes programs.agent-slop.claudeHooks
+};
+```
+
+The module installs the binary, writes the user config tier and the grok
+hook file, and lints every custom rule you declare at build time. Full
+option reference: [Installation](mdbook/guide/installation.md).
+
+</details>
+
+<details>
+<summary><b>Cargo</b></summary>
+
+```sh
+git clone https://github.com/Arkptz/agent-slop
+cd agent-slop
+cargo build --release -p agent-slop   # binary at target/release/agent-slop
+```
+
+</details>
+
+## Usage
+
+```sh
+agent-slop scan                                # human output on a tty, JSON otherwise
+agent-slop scan --since main --fail-on error   # CI: fail if the branch added an error
+agent-slop check src/main.rs                   # advisory, no git needed, always exits 0
+agent-slop explain slop/comment-history        # what a rule means, and its suppression line
+```
+
+A legitimate exception is suppressed on the line it covers:
+
+```python
+# agent-slop: allow slop/comment-history -- rollback steps required by ADR-031
+# We previously always sent a Referer header here.
+referer = None
+```
+
+<details>
+<summary><b>Harness integration</b></summary>
+
+`agent-slop hook` reads one hook payload on stdin and dispatches on the
+event name. Claude Code (`snake_case`) and grok (camelCase) payloads are
+both understood.
+
+| Event | Behaviour | Exit |
+|---|---|---|
+| `PostToolUse` | advice on the file just written, as `additionalContext` | always 0 |
+| `SessionStart` | pins the ratchet baseline | always 0 |
+| `Stop` | names every added error, its legitimate exception and the suppression line | 0 allow, 2 block |
+
+Details: [Hooks and the ratchet](mdbook/guide/hooks-and-the-ratchet.md).
+
+</details>
+
+<details>
+<summary><b>Configuration and extension</b></summary>
+
+Configuration has three tiers: built-ins, the user file
+`~/.config/agent-slop/config.toml`, and the repository's
+`.agent-hooks.toml`. A repository sets its own rule levels and mode, like
+any linter config; only the user tier may declare what executes.
+
+- [Configuration](mdbook/guide/configuration.md): every `[slop]` key.
+- [Custom rules](mdbook/guide/custom-rules.md): one TOML file per rule,
+  with fixtures; promotion to `error` requires green strict lint.
+- [Tuning built-ins](mdbook/guide/tuning.md): extend or prune phrase
+  lists, adjust thresholds within audited ranges.
+- [Writing a plugin](mdbook/guide/plugins.md): the `agent-slop-plugin/1`
+  protocol (`describe`, then `check`).
+
+</details>
+
+## Documentation
+
+The [user guide](mdbook/guide/introduction.md) covers the CLI, the three
+configuration tiers, every rule, suppressions, the Stop gate, linter
+adapters, custom rules, tuning, plugins, telemetry and the optional judge.
+Build it with `mdbook build mdbook`.
+
+## Library crates
 
 <!-- cargo-rdme start -->
 
@@ -25,7 +179,7 @@ reviewed corpus of sixteen rule families embedded from
 `rules/*.toml`. Nothing in it spawns a process, reads the network or
 consults a model; the binary and the integrations crate own those.
 
-## Modules
+### Modules
 
 - `lang` — the language table (Rust, Java, Python, Go, TypeScript,
   TSX, JavaScript, Bash, Nix, C, C++, YAML) and the comment walk.
@@ -39,7 +193,7 @@ consults a model; the binary and the integrations crate own those.
   ever failing, plus the `[slop.tune]` adjustments and the
   `[slop.plugins]` declarations.
 
-## Example
+### Example
 
 ```rust
 use agent_slop_core::{config, rules};
@@ -54,169 +208,32 @@ assert_eq!(findings[0].rule, "slop/comment-history");
 
 <!-- cargo-rdme end -->
 
-## What the tool is
+| Crate | Contents |
+|---|---|
+| `agent-slop-core` | comment extraction, rule engine, suppressions, configuration |
+| `agent-slop-protocol` | wire types of the plugin protocol |
+| `agent-slop-integrations` | linter adapters, plugin host, judge, telemetry |
+| `agent-slop` | the binary: `scan`, `check`, `hook`, `rules`, `self-test` |
 
-The binary is two things:
+## Contributing
 
-- **A linter for comment slop.** Sixteen rule families (`slop/comment-history`,
-  `slop/todo-no-condition`, `slop/review-jargon`, …) catch the residue AI
-  coding agents leave in source comments: change-history narration, session
-  meta ("for now", "as requested"), review vocabulary ("nit:", "LGTM"),
-  comments that restate the code, TODOs with no removal condition, unsourced
-  perf claims and constraints. Matching is deterministic — no model in the
-  loop — and bilingual by design: most phrase lists cover English and
-  Russian, with stems for Russian inflection. Rules run over Rust, Java, Python, Go, TypeScript, TSX,
-  JavaScript, Bash, Nix, C, C++ and YAML.
-- **A ratcheting Stop gate.** Registered as a harness hook, it pins a
-  baseline at `SessionStart`, recomputes the session's added findings at
-  `Stop`, and — in `block` mode — exits 2 when the session *added* an error
-  the baseline does not account for. Existing debt never blocks: the gate is
-  a ratchet, not an audit.
-
-Everything about it is fail-open: no git, no repository, a malformed config
-tier, an expired deadline — the scan degrades, never the exit code. A gate
-that can crash a session is worse than no gate.
-
-## Extending it
-
-Three extension surfaces, all config-only until you want code:
-
-- **Custom rules** — one TOML file per rule in
-  `~/.config/agent-slop/rules/` or `<toplevel>/.agent-slop/rules/`:
-  phrase, anchored-marker, TODO-condition or regex matching, with
-  fixtures that run through the real engine (`agent-slop rules test`).
-  Namespace is `<producer>/<id>`; promotion to `error` requires the
-  strict bar (exception, note, provenanced hit and miss fixtures, all of
-  them green through the engine). See
-  [Custom rules](mdbook/guide/custom-rules.md).
-- **Tuning built-ins** — `[slop.tune.<family>]` extends or prunes a
-  family's phrase lists and adjusts its thresholds within audited ranges;
-  `self-test` fails when a tune weakens the frozen blocking rule. See
-  [Tuning built-ins](mdbook/guide/tuning.md).
-- **External plugins** — any executable speaking `agent-slop-plugin/1`
-  (JSON over stdio: `describe`, then `check`). Declared in the user tier
-  only, so a cloned repo cannot choose what executes; findings arrive as
-  `<plugin>/<rule>` with suppressions and ratcheting that behave like the
-  built-ins. See [Writing a plugin](mdbook/guide/plugins.md).
-
-## Install
-
-With [Nix](https://nixos.org) and flakes:
+See [CONTRIBUTING.md](CONTRIBUTING.md). The dev shell mirrors CI:
 
 ```sh
-# run it without installing
-nix run github:Arkptz/agent-slop -- scan
-
-# or add the package / home-manager module to your flake inputs
+nix develop
+cargo nextest run --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+cargo rdme --check
 ```
 
-As a home-manager module (installs the binary, the user config tier and the
-grok hook source; see [the book](mdbook/guide/installation.md) for the full
-option reference):
+Design decisions are tracked with `dg` under `docs/`; see
+[AGENTS.md](AGENTS.md).
 
-```nix
-programs.agent-slop = {
-  enable = true;
-  hooks.grok.enable = true;
-  hooks.claude.enable = true; # exposes programs.agent-slop.claudeHooks
-};
-```
+## Security
 
-With cargo, from a clone of this repository:
-
-```sh
-cargo build --release -p agent-slop   # binary at target/release/agent-slop
-```
-
-## 60-second quickstart
-
-```sh
-# Scan the whole repository (human output on a tty, JSON otherwise)
-agent-slop scan
-
-# Scan only what differs from main, and fail if anything was added at error
-agent-slop scan --since main --fail-on error
-
-# Check named files, no git needed, always exit 0
-agent-slop check src/main.rs
-
-# What a rule means, and the ready-made suppression line
-agent-slop explain slop/comment-history
-```
-
-Real output of `check` on a slopped file:
-
-```text
-demo.py:1:1 slop/comment-history — change-history residue 'previously' — narrates the edit, not the code
-```
-
-Suppress one finding on one line — the reason must carry a referent (URL,
-decision-doc id, issue ref, path, or `date:YYYY-MM-DD`):
-
-```python
-# agent-slop: allow slop/comment-history -- rollback steps required by ADR-031
-# We previously always sent a Referer header here.
-referer = None
-```
-
-## Harness integration
-
-`agent-slop hook` reads one hook payload on stdin and dispatches on the
-event name; every leg is fail-open. The home-manager module wires grok
-automatically and exposes the Claude registrations as a read-only value:
-
-| Leg | Behaviour | Exit |
-|---|---|---|
-| `PostToolUse` | advice on the file just written, as `additionalContext` | always 0 |
-| `SessionStart` | pins the ratchet baseline for the session | always 0 |
-| `Stop` | ratchet against the pinned baseline; block message names every added error, its legitimate exception and the suppression line | 0 allow, 2 block |
-
-Both Claude Code (`snake_case`) and grok (camelCase, and both spellings in
-one payload) envelopes are understood; the payload difference is invisible
-to configuration. Full protocol and payload details:
-[Hooks and the ratchet](mdbook/guide/hooks-and-the-ratchet.md).
-
-## Documentation
-
-The [user guide](mdbook/guide/introduction.md) covers the CLI reference, the
-three configuration tiers, every rule with bad/good examples, suppressions,
-the Stop gate, the built-in linter adapters, custom rules, tuning,
-external plugins, telemetry, and the optional Laya judge. Build it locally
-with `mdbook build mdbook`.
-
-## Development
-
-The dev shell mirrors CI. The commands you will use most:
-
-```sh
-cargo nextest run --workspace                            # run all tests
-cargo clippy --workspace --all-targets -- -D warnings    # lint (zero warnings)
-cargo fmt --all                                          # format
-cargo rdme --check                                       # verify the README is in sync
-./scripts/ci-local.sh                                    # run CI jobs locally via act
-```
-
-## Project layout
-
-```text
-.
-├── crates/
-│   ├── agent-slop-core/           # comment extraction, rule engine, config model
-│   ├── agent-slop-protocol/       # the plugin protocol wire types
-│   ├── agent-slop-integrations/   # linter adapters, plugin host, judge, telemetry
-│   └── agent-slop/                # the binary: scan, check, hook, ratchet
-├── crates/agent-slop-core/rules/  # the rule corpus (one TOML per family)
-├── mdbook/                        # the user guide (book.toml, guide/)
-├── nix/                           # package.nix, hm-module.nix
-└── flake.nix                      # packages, checks, dev shell, HM module
-```
-
-## Decisions
-
-This project tracks decisions, policies, and incidents with `dg` under
-`docs/`. See [AGENTS.md](AGENTS.md) for the workflow.
+Report vulnerabilities privately; see [SECURITY.md](SECURITY.md).
 
 ## License
 
-Dual-licensed under either MIT or Apache-2.0 at your option
-(`SPDX-License-Identifier: MIT OR Apache-2.0`).
+Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
+[MIT license](LICENSE-MIT) at your option.
