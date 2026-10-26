@@ -1,3 +1,5 @@
+#![allow(clippy::expect_used, clippy::panic)]
+
 //! End-to-end telemetry cover: the built binary's own hook legs against a
 //! scratch git repository, and the row put through the `SessionEnd` rewrite
 //! filter that the shipped recorder actually runs.

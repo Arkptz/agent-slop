@@ -1,5 +1,6 @@
 //! The rule-fixture test target, driven through the crate's public API.
 //! The test bodies are `include!`d from `tests/rules/rule_fixtures.rs`.
+#![cfg_attr(test, allow(clippy::expect_used, clippy::panic))]
 
 mod common {
     use agent_slop_core::{config, rules};

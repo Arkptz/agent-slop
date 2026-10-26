@@ -1,3 +1,5 @@
+#![allow(clippy::expect_used, clippy::panic)]
+
 //! POL-026 cover for `agent-slop self-test`: the command exists to say
 //! whether the gate that will actually run is the frozen one, so its
 //! subject is the RESOLVED config, not the built-in tier. Against the

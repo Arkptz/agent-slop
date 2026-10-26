@@ -1,3 +1,5 @@
+#![allow(clippy::expect_used, clippy::panic)]
+
 //! WP-4 cover: `rules lint`, `rules test`, `rules --format json`,
 //! `explain` and `self-test` over custom rule files, driven through the
 //! built binary in a scratch repository with `$HOME` inside it.

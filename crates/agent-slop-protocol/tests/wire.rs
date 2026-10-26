@@ -1,3 +1,5 @@
+#![allow(clippy::expect_used)]
+
 use agent_slop_protocol::{
     Cost, Input, Level, Manifest, PROTOCOL_VERSION, Request, Response, RuleDecl, Stage,
     is_supported,

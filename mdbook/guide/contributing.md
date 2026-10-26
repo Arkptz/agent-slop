@@ -28,7 +28,7 @@ These mirror CI exactly:
 
 ```bash
 cargo fmt --all --check
-cargo clippy --all-targets -- -D warnings
+cargo clippy --all-targets -- -D warnings  # pedantic + panic-free (expect/panic allowed in tests)
 cargo nextest run
 cargo test --doc
 cargo rdme --check

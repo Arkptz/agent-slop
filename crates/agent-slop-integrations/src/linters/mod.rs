@@ -237,8 +237,9 @@ pub fn run(
             reason: "no-targets".to_string(),
         });
     }
+    // WholeProject returned above; the match needs both arms to stay total.
     match a.arity {
-        PathArity::WholeProject => unreachable!("handled above"),
+        PathArity::WholeProject => unreachable!("returned above"),
         PathArity::Many => {
             let owned: Vec<String> = mine.into_iter().cloned().collect();
             exec(a, repo_root, &owned)

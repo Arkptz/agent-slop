@@ -1,3 +1,5 @@
+#![allow(clippy::expect_used, clippy::panic)]
+
 //! The Laya second verdict end to end, through the built binary's
 //! `PostToolUse` leg: a stub endpoint answers, the envelope carries the
 //! verdict under its own finding, and the finding line is byte-identical to

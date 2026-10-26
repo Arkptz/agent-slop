@@ -242,9 +242,7 @@ fn defects(input: &RowInput, ts: &str) -> Vec<serde_json::Value> {
     for (rule, hits) in &by_rule {
         let files: std::collections::BTreeSet<&str> =
             hits.iter().map(|f| f.file.as_str()).collect();
-        let top = hits
-            .first()
-            .expect("a rule key exists because a finding produced it");
+        let Some(top) = hits.first() else { continue };
         out.push(defect(
             rule,
             &format!(
@@ -259,9 +257,7 @@ fn defects(input: &RowInput, ts: &str) -> Vec<serde_json::Value> {
         ));
     }
     for (rule, hits) in &suppressed {
-        let top = hits
-            .first()
-            .expect("a rule key exists because a finding produced it");
+        let Some(top) = hits.first() else { continue };
         let reason = top
             .suppression
             .as_ref()

@@ -1,3 +1,5 @@
+#![allow(clippy::expect_used, clippy::panic)]
+
 //! WP-6 cover: the plugin host through the BUILT binary. The plugin is a
 //! `/bin/sh` script written into the scratch `PATH`, speaking the real
 //! `agent-slop-plugin/1` protocol. Tier trust, timeouts, output caps and

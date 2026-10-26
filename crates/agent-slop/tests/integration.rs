@@ -1,3 +1,5 @@
+#![allow(clippy::expect_used, clippy::panic)]
+
 //! SPEC-006's ratchet + suppression matrix through the BUILT binary's
 //! `hook` leg: the Stop scenarios exactly as a harness drives them,
 //! asserted on the process exit code. `tests/telemetry.rs` covers the
