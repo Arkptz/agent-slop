@@ -85,8 +85,9 @@ finding (owner decision 2026-10-25, Q6).
 A custom rule may declare `error`, but it arrives as `warning` with a note.
 Promotion to `error` is the standard overrides table, and it is accepted
 only when the rule passes the strict bar — a non-empty `[exception]`
-shape, a `note` over 40 characters, and at least one `hit` and one `miss`
-fixture, each carrying a `provenance` of at least 10 characters:
+shape, a `note` over 40 characters, at least one `hit` and one `miss`
+fixture each carrying a `provenance` of at least 10 characters, and every
+fixture green through the real engine (the same run `rules test` does):
 
 ```toml
 [slop.rules.overrides]

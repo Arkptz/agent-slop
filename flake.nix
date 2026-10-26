@@ -163,6 +163,22 @@
           ];
         };
         brokenRule = goodRule // {fixture = [(builtins.head goodRule.fixture)];};
+        # A hit fixture that never fires, with both fixture kinds present, so
+        # the lint fails on the matcher and not on a missing kind.
+        redHitRule = goodRule // {
+          fixture = [
+            ((builtins.head goodRule.fixture) // {source = "# nothing matching\nx = 1\n";})
+            (builtins.elemAt goodRule.fixture 1)
+          ];
+        };
+        hmRedHit = hmEval [
+          {
+            programs.agent-slop = {
+              enable = true;
+              rules.no-placeholder = redHitRule;
+            };
+          }
+        ];
         hmBroken = hmEval [
           {
             programs.agent-slop = {
@@ -211,20 +227,17 @@
               touch $out
             '';
 
-          # The same lint on a deliberately broken rule must FAIL: a check
-          # that cannot fail proves nothing (POL-026).
+          # The module lints every rule at build time, so a deliberately
+          # broken rule must make that build FAIL: a check that cannot fail
+          # proves nothing (POL-026). testBuildFailure turns the failing
+          # build into a derivation whose log this check can assert on.
           hm-rules-lint-catches-a-broken-rule = let
-            files = hmBroken.config.xdg.configFile;
+            failed = pkgs.testers.testBuildFailure hmBroken.config.xdg.configFile."agent-slop/rules/no-placeholder.toml".source;
+            redHit = pkgs.testers.testBuildFailure hmRedHit.config.xdg.configFile."agent-slop/rules/no-placeholder.toml".source;
           in
             pkgs.runCommand "agent-slop-hm-rules-lint-broken" {} ''
-              export HOME=$TMPDIR
-              mkdir -p "$HOME/.config/agent-slop/rules"
-              cp ${files."agent-slop/rules/no-placeholder.toml".source} "$HOME/.config/agent-slop/rules/no-placeholder.toml"
-              cd "$TMPDIR"
-              if ${self'.packages.default}/bin/agent-slop rules lint; then
-                echo "rules lint passed a rule with no miss fixture" >&2
-                exit 1
-              fi
+              grep -F "no miss fixture" ${failed}/testBuildFailure.log
+              grep -F "expected a hit" ${redHit}/testBuildFailure.log
               touch $out
             '';
 

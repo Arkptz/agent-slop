@@ -64,6 +64,21 @@ self: {
     inherit (p) enable timeout_ms severity settings env_passthrough;
   };
 
+  # A rule file is only written to the user's rules directory after
+  # `agent-slop rules lint` and `rules test` accept it, so a broken rule
+  # fails the home build instead of being dropped with a note at runtime.
+  lintedRule = name: rule: let
+    rendered = tomlFormat.generate "agent-slop-rule-${name}.toml" rule;
+    bin = lib.getExe cfg.package;
+  in
+    pkgs.runCommand "agent-slop-rule-${name}.toml" {} ''
+      export HOME="$TMPDIR/home"
+      mkdir -p "$HOME"
+      ${lib.escapeShellArg bin} rules lint ${rendered}
+      ${lib.escapeShellArg bin} rules test ${rendered}
+      cp ${rendered} $out
+    '';
+
   leg = timeout: {
     type = "command";
     inherit command timeout;
@@ -172,8 +187,10 @@ in {
       description = ''
         Custom rule files, written to
         {file}`~/.config/agent-slop/rules/<name>.toml`. Keys are file names
-        (without the extension); values are the rule documents, validated by
-        `agent-slop rules lint` in the module check.
+        (without the extension); values are the rule documents. Each file is
+        run through `agent-slop rules lint` and `agent-slop rules test` when
+        the configuration is built, so a rule with a broken fixture, a missing
+        miss fixture or a reserved producer fails the build.
       '';
     };
 
@@ -318,7 +335,7 @@ in {
           }
         ]
         ++ lib.mapAttrsToList (name: rule: {
-          "agent-slop/rules/${name}.toml".source = tomlFormat.generate "agent-slop-rule-${name}.toml" rule;
+          "agent-slop/rules/${name}.toml".source = lintedRule name rule;
         })
         cfg.rules
       );

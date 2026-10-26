@@ -86,7 +86,8 @@ Three extension surfaces, all config-only until you want code:
   phrase, anchored-marker, TODO-condition or regex matching, with
   fixtures that run through the real engine (`agent-slop rules test`).
   Namespace is `<producer>/<id>`; promotion to `error` requires the
-  strict bar (exception, note, provenanced hit and miss fixtures). See
+  strict bar (exception, note, provenanced hit and miss fixtures, all of
+  them green through the engine). See
   [Custom rules](mdbook/guide/custom-rules.md).
 - **Tuning built-ins** — `[slop.tune.<family>]` extends or prunes a
   family's phrase lists and adjusts its thresholds within audited ranges;

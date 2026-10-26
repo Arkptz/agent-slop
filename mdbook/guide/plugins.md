@@ -29,14 +29,17 @@ everything else is refused with a config note.
 command = ["/run/current-system/sw/bin/vague-why-slop"]  # absolute, or PATH-resolved
 enable = true
 timeout_ms = 2000        # wall clock of one call
-severity = "warning"     # cap; an error still arrives as warning unless
+severity = "warning"     # level of every rule of the plugin; omit it to
+                         # let each rule's manifest default_level stand. An
+                         # error still arrives as warning unless
                          # [slop.rules.overrides] promotes the rule
 settings = { lang = "en" }          # opaque, passed through in the request
 env_passthrough = ["VAGUE_WHY_HOME"] # plus PATH, HOME, LANG, LC_ALL, TMPDIR,
                                      # XDG_CACHE_HOME; everything else is scrubbed
 ```
 
-The name must match `[a-z0-9-]{1,32}` and must not be a reserved producer
+The name must match `[a-z][a-z0-9-]{1,31}` (a lowercase letter first, 2 to 32
+characters) and must not be a reserved producer
 (`slop`, `suppression`, `ruff`, `deadnix`, `statix`, `clippy`, `govet`,
 `tsc`) or the producer of a loaded custom rule — findings are reported as
 `<name>/<rule>`, and the namespace must stay unambiguous.
@@ -142,19 +145,25 @@ $ agent-slop scan a.py --format json
 | reason | when |
 |---|---|
 | `absent` | the executable is not on `PATH`/does not exist |
-| `describe-failed` | `describe` exited nonzero or printed invalid JSON |
+| `describe-failed` | `describe` exited zero but printed invalid JSON (a nonzero exit is `failed:<exit>`, as for `check`) |
 | `protocol-mismatch` | manifest or response names another `protocol` |
 | `name-mismatch` | the manifest's `name` differs from the configured key |
 | `cost` | class D without an explicit `--plugins` name, or not class A in a hook |
-| `timeout` | the call exceeded its budget; the process is killed |
+| `timeout` | the call exceeded its budget; the plugin's whole process group is killed, helpers included |
 | `output-too-large` | stdout past 8 MiB |
-| `failed:<exit>` | `check` exited nonzero |
+| `failed:<exit>` | `describe` or `check` exited nonzero; `failed:signal` when it was killed by a signal |
 | `bad-response` | stdout is not a valid `Response` |
-| `deadline` | less than 50 ms left on the caller's deadline |
+| `deadline` | less than 50 ms left on the caller's deadline, or the deadline ran out while the host was folding the response in (the findings read so far are kept) |
 | `no-targets` | no requested file matches the manifest's langs/exts |
 
-Findings past 5 000 per plugin per call are truncated, with a skip entry
-saying so.
+Findings past 5 000 per plugin per call are truncated before the host
+reads them, with a skip entry saying so. Every budget is real time: each
+call gets `min(timeout_ms, what is left of the command's deadline − 50 ms)`
+recomputed when it starts (plan §3.4), so one plugin's spend shortens the
+next one's, and a hook leg's 300 ms ceiling covers all of its plugins
+together. A plugin upgrade is picked up without cache surgery: the
+manifest cache key covers every file in the command line, script
+included.
 
 ## Suppression and the ratchet
 
