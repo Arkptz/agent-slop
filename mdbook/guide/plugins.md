@@ -162,11 +162,14 @@ reads them, with a skip entry saying so. Every budget is real time: each
 call gets `min(timeout_ms, what is left of the command's deadline − 50 ms)`
 recomputed when it starts (plan §3.4), so one plugin's spend shortens the
 next one's, and a hook leg's 300 ms ceiling covers all of its plugins
-together. Under `scan --since` the head pass may spend at most half of
-what is left when it starts; the base-side pass gets the rest. A plugin
+together. Under `scan --since` a deterministic comments plugin, which also
+runs over the base, may spend at most half of what is left on its head
+call; the base-side pass gets the rest. Every other plugin keeps the
+whole deadline. A plugin
 the host has to kill on a `SIGINT`/`SIGTERM` aimed at itself (terminal
 Ctrl-C, a harness killing the hook's process group) dies with its whole
-group before the host exits. A plugin upgrade is picked up without cache surgery: the
+group before the host exits; a signal the host inherited as ignored stays
+ignored. A plugin upgrade is picked up without cache surgery: the
 manifest cache key covers every file in the command line, script
 included.
 

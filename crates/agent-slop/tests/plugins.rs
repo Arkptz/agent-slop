@@ -478,6 +478,70 @@ fn a_cut_baseline_pass_never_charges_inherited_plugin_findings() {
     );
 }
 
+/// Only a deterministic comments plugin pays for the base-side pass: a
+/// plugin that runs once under `--since` keeps the whole deadline.
+#[test]
+fn a_plugin_without_a_baseline_pass_keeps_the_whole_deadline_under_since() {
+    let s = Scratch::new("since-nondet");
+    let slow_nondet = PLUGIN
+        .replace("\"deterministic\":true", "\"deterministic\":false")
+        .replace("    input=$(cat)\n", "    input=$(cat)\n    sleep 1\n");
+    assert_ne!(slow_nondet, PLUGIN, "the probe must patch the plugin");
+    s.write_plugin("acme-slop", &slow_nondet);
+    s.user_config("[slop.plugins.acme]\ncommand = [\"acme-slop\"]\ntimeout_ms = 20000\n");
+    s.write("a.py", RULE_1);
+    s.commit("base");
+    s.write("a.py", &format!("{RULE_1}y = 2\n"));
+
+    let (_, v, err) = s.scan_args(&["--since", "HEAD", "--deadline-ms", "1800"]);
+    assert!(
+        v["findings"]
+            .as_array()
+            .is_some_and(|fs| fs.iter().any(|f| f["rule"] == "acme/vague-why")),
+        "a 1 s plugin fits a 1.8 s deadline when it has no base-side pass: {v} {err}"
+    );
+}
+
+/// A host started with `SIGINT` ignored (`nohup`, `cmd &` in a script)
+/// keeps ignoring it while a plugin call is in flight.
+#[test]
+fn an_inherited_sigint_ignore_survives_a_plugin_call() {
+    let s = Scratch::new("sigign");
+    let slow = PLUGIN.replace("    input=$(cat)\n", "    input=$(cat)\n    sleep 2\n");
+    s.write_plugin("acme-slop", &slow);
+    s.user_config("[slop.plugins.acme]\ncommand = [\"acme-slop\"]\ntimeout_ms = 20000\n");
+    s.write("a.py", RULE_1);
+    let script = format!(
+        "trap '' INT; {bin} scan --format json --plugins acme --deadline-ms 20000 a.py >/dev/null 2>&1 & \
+         pid=$!; sleep 0.7; kill -INT $pid; wait $pid; echo $?",
+        bin = env!("CARGO_BIN_EXE_agent-slop"),
+    );
+    let out = Command::new("sh")
+        .arg("-c")
+        .arg(&script)
+        .current_dir(&s.repo)
+        .env("HOME", &s.home)
+        .env("XDG_CACHE_HOME", s.root.join("cache"))
+        .env(
+            "PATH",
+            format!(
+                "{}:{}",
+                s.bin.display(),
+                std::env::var("PATH").unwrap_or_default()
+            ),
+        )
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .expect("spawn sh");
+    let code = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    assert_ne!(
+        code, "130",
+        "SIGINT was ignored at start and must stay ignored"
+    );
+    assert!(code == "0" || code == "1", "host exit {code}");
+}
+
 fn git_out(dir: &Path, args: &[&str]) -> String {
     String::from_utf8_lossy(
         &Command::new("git")
