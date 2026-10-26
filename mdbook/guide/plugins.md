@@ -168,8 +168,9 @@ call; the base-side pass gets the rest. Every other plugin keeps the
 whole deadline. A plugin
 the host has to kill on a `SIGINT`/`SIGTERM` aimed at itself (terminal
 Ctrl-C, a harness killing the hook's process group) dies with its whole
-group before the host exits; a signal the host inherited as ignored stays
-ignored. A plugin upgrade is picked up without cache surgery: the
+group before the host exits. On Linux a signal the host inherited as
+ignored stays ignored; the check reads `/proc/self/status`, so elsewhere
+an inherited ignore is not detected. A plugin upgrade is picked up without cache surgery: the
 manifest cache key covers every file in the command line, script
 included.
 
