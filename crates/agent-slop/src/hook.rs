@@ -361,6 +361,7 @@ fn hook_plugins(
             selection: &Selection::Auto,
             stage: Stage::Hook,
             deadline: leg_deadline,
+            attributable_deadline: None,
         },
         &root,
         &[(named, content.to_string())],

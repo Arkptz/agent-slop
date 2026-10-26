@@ -340,9 +340,10 @@ pub(crate) fn run(cfg: &ResolvedConfig, args: &ScanArgs, cwd: &Path, git: bool) 
 /// inherited findings sit in the baseline instead of counting as added
 /// (D3's spirit).
 ///
-/// The two passes split the deadline: the head pass may spend at most half
-/// of what is left when it starts, the baseline pass gets everything the
-/// head pass did not use. A plugin whose baseline pass did not run to the
+/// The two passes of a deterministic comments plugin split the deadline:
+/// its head call may spend at most half of what is left when the plugin
+/// pass starts, the baseline pass gets everything the head pass did not
+/// use. Other plugins run once and keep the whole deadline. A plugin whose baseline pass did not run to the
 /// end is not attributable: its findings are reported, never counted as
 /// added, and the skip is surfaced as `baseline-<reason>`.
 fn run_plugins(
@@ -355,17 +356,14 @@ fn run_plugins(
     let selection = plugins_arg.map_or(Selection::Auto, Selection::parse);
     let cache = DescribeCache::from_env();
     let baseline_pass = ctx.repo.zip(ctx.base);
-    let head_deadline = if baseline_pass.is_some() {
-        half_of_remaining(ctx.deadline)
-    } else {
-        ctx.deadline
-    };
+    let attributable_deadline = baseline_pass.and_then(|_| half_of_remaining(ctx.deadline));
     let mut plugins = run(
         cfg,
         &Opts {
             selection: &selection,
             stage: ctx.stage,
-            deadline: head_deadline,
+            deadline: ctx.deadline,
+            attributable_deadline,
         },
         ctx.root,
         contents,
@@ -389,6 +387,7 @@ fn run_plugins(
                 selection: &narrow,
                 stage: ctx.stage,
                 deadline: ctx.deadline,
+                attributable_deadline: None,
             },
             ctx.root,
             &blobs,

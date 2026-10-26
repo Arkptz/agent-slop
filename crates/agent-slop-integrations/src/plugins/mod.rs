@@ -190,6 +190,10 @@ pub struct Opts<'a> {
     /// before every call: what one plugin spends, the next one does not
     /// get again.
     pub deadline: Option<Instant>,
+    /// A tighter deadline for deterministic comments plugins only: under
+    /// `scan --since` their base-side pass must fit in what this pass
+    /// leaves, while every other plugin keeps `deadline`.
+    pub attributable_deadline: Option<Instant>,
 }
 
 /// The host's result for one invocation.
@@ -277,8 +281,14 @@ pub fn run(
             result.settled.insert(name.clone());
             continue;
         }
+        let attributable = manifest.input == Input::Comments && manifest.deterministic;
+        let deadline = if attributable {
+            opts.attributable_deadline.or(opts.deadline)
+        } else {
+            opts.deadline
+        };
         // What `describe` spent is gone: the check call gets what is left.
-        let Some(budget) = budget_for(plugin, opts.deadline, hook_cutoff) else {
+        let Some(budget) = budget_for(plugin, deadline, hook_cutoff) else {
             result.skip(name, "deadline");
             continue;
         };
@@ -331,7 +341,7 @@ pub fn run(
         if !truncated && !status.partial {
             result.settled.insert(name.clone());
         }
-        if manifest.input == Input::Comments && manifest.deterministic {
+        if attributable {
             result.attributable.insert(name.clone());
         }
         result.findings.append(&mut found);

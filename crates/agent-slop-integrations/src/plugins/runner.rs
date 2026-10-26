@@ -223,6 +223,11 @@ mod host_signals {
                 let mut hits = Vec::new();
                 for sig in [SIGINT, SIGTERM] {
                     let hit = Arc::new(AtomicBool::new(false));
+                    // An inherited SIG_IGN (`nohup`, a background job) must
+                    // stay ignored: a handler would turn it into a death.
+                    if inherited_ignore(sig) {
+                        continue;
+                    }
                     // Actions run in registration order: record first,
                     // then the default action when nothing is in flight.
                     signal_hook::flag::register(sig, Arc::clone(&hit)).ok()?;
@@ -236,6 +241,21 @@ mod host_signals {
                 })
             })
             .as_ref()
+    }
+
+    /// Whether `sig` was ignored when the process started, read from the
+    /// `SigIgn` mask in `/proc/self/status` (bit `sig - 1`). Where that file
+    /// does not exist the signal is treated as not ignored.
+    fn inherited_ignore(sig: i32) -> bool {
+        let Ok(status) = std::fs::read_to_string("/proc/self/status") else {
+            return false;
+        };
+        status
+            .lines()
+            .find_map(|l| l.strip_prefix("SigIgn:"))
+            .and_then(|mask| u64::from_str_radix(mask.trim(), 16).ok())
+            .zip(u32::try_from(sig - 1).ok())
+            .is_some_and(|(mask, bit)| mask.checked_shr(bit).is_some_and(|m| m & 1 == 1))
     }
 
     /// One plugin call in flight.
