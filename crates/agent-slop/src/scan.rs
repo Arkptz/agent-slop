@@ -284,7 +284,13 @@ pub(crate) fn run(cfg: &ResolvedConfig, args: &ScanArgs, cwd: &Path, git: bool) 
         contents,
     } = walk(cfg, &root, &targets, deadline);
 
-    let rel_targets: Vec<String> = targets.iter().map(|p| relative(&root, p)).collect();
+    // The walk skips excluded paths for the rule engine; the linter
+    // adapters see the same filtered list so [slop.exclude] binds to them.
+    let rel_targets: Vec<String> = targets
+        .iter()
+        .map(|p| relative(&root, p))
+        .filter(|rel| !excluded(cfg, rel))
+        .collect();
     let file_lines: std::collections::BTreeMap<String, Vec<&str>> = rel_targets
         .iter()
         .zip(&contents)
