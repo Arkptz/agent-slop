@@ -222,10 +222,16 @@ pub fn discover(dir: Option<&Path>, tier: Tier, notes: &mut Vec<ConfigNote>) -> 
 
 /// The strict-lint bar an override must clear before it may take a
 /// `<producer>/*` rule to `error`: a non-empty exception, a note over 40
-/// characters, and at least one hit and one miss fixture, each carrying
-/// provenance. Returns the unmet requirements.
+/// characters, at least one hit and one miss fixture, each carrying
+/// provenance, and every fixture green through the real engine. Returns
+/// the unmet requirements.
+///
+/// The fixture run is what makes this "lint passes", not "fixtures exist"
+/// (owner decision Q1, 2026-10-25); a rule that fails its own fixtures is
+/// clamped to warning wherever a tier promotes it.
 #[must_use]
-pub fn strict_lint_gaps(rule: &RuleFile) -> Vec<String> {
+pub fn strict_lint_gaps(loaded: &LoadedRule) -> Vec<String> {
+    let rule = &loaded.rule;
     let mut gaps = Vec::new();
     if rule.exception.shape.trim().is_empty() {
         gaps.push("empty [exception] shape".to_string());
@@ -243,6 +249,18 @@ pub fn strict_lint_gaps(rule: &RuleFile) -> Vec<String> {
     }
     if !provenanced("miss") {
         gaps.push("no miss fixture with provenance".to_string());
+    }
+    if gaps.is_empty() {
+        for result in run_fixtures(loaded) {
+            if !result.passed {
+                gaps.push(format!(
+                    "fixture {} ({}): {}",
+                    result.index + 1,
+                    result.expect,
+                    result.detail
+                ));
+            }
+        }
     }
     gaps
 }
@@ -306,7 +324,7 @@ pub fn compile(
             .copied();
         match explicit {
             Some(RuleLevel::Error) => {
-                let gaps = strict_lint_gaps(&loaded.rule);
+                let gaps = strict_lint_gaps(loaded);
                 if !gaps.is_empty() {
                     notes.push(ConfigNote {
                         tier: loaded.tier,
@@ -393,7 +411,7 @@ pub fn run_fixtures(loaded: &LoadedRule) -> Vec<FixtureResult> {
 
 /// Everything `rules lint` reports about one rule: a declared `error`,
 /// missing fixtures, the strict-lint gaps that would refuse a promotion,
-/// and red fixtures.
+/// and red fixtures (each reported once, below).
 #[must_use]
 pub fn lint(loaded: &LoadedRule) -> Vec<String> {
     let rule = &loaded.rule;
@@ -407,10 +425,11 @@ pub fn lint(loaded: &LoadedRule) -> Vec<String> {
             problems.push(format!("no {expect} fixture"));
         }
     }
-    for gap in strict_lint_gaps(rule) {
-        let missing_kind = (gap.starts_with("no hit fixture") && !has("hit"))
-            || (gap.starts_with("no miss fixture") && !has("miss"));
-        if !missing_kind {
+    for gap in strict_lint_gaps(loaded) {
+        let reported_below = (gap.starts_with("no hit fixture") && !has("hit"))
+            || (gap.starts_with("no miss fixture") && !has("miss"))
+            || gap.starts_with("fixture ");
+        if !reported_below {
             problems.push(format!("cannot be promoted to error: {gap}"));
         }
     }
@@ -560,6 +579,41 @@ x = 1
     }
 
     #[test]
+    fn override_to_error_requires_green_fixtures() {
+        const PROMOTE: &str = "[slop.rules.overrides]\n\"acme/no-placeholder\" = \"error\"\n";
+        // The hit fixture's source does not contain the phrase, so the
+        // rule never fires on it: `rules lint` and `rules test` both fail,
+        // and Q1 refuses the promotion.
+        let red = RULE.replace(
+            "# placeholder implementation, real one later",
+            "# nothing to see here",
+        );
+        let (rule, _) = load(&red);
+        let cfg = cfg_with(rule.expect("loads"), Some(PROMOTE));
+        assert_eq!(
+            cfg.severity_for("acme/no-placeholder"),
+            Some(Severity::Warning),
+            "a rule with a red fixture may not be promoted"
+        );
+        let note = cfg
+            .notes
+            .iter()
+            .find(|n| {
+                n.reason
+                    .contains("override to error on acme/no-placeholder clamped")
+            })
+            .expect("clamp note");
+        assert!(
+            note.reason.contains("expected a hit"),
+            "the note names the red fixture: {note:?}"
+        );
+        assert_eq!(
+            cfg.overrides.get("acme/no-placeholder"),
+            Some(&RuleLevel::Warning)
+        );
+    }
+
+    #[test]
     fn malformed_custom_rule_is_dropped_not_fatal() {
         for bad in [
             "this is } not toml",
@@ -701,6 +755,170 @@ x = 1
         let (rule, _) = load(&red);
         let results = run_fixtures(&rule.expect("loads"));
         assert!(results.iter().any(|r| !r.passed && r.expect == "miss"));
+    }
+
+    #[test]
+    fn a_red_hit_fixture_is_reported_once_and_fails_lint() {
+        let red = RULE.replace(
+            "# placeholder implementation, real one later",
+            "# nothing to see here",
+        );
+        let (rule, _) = load(&red);
+        let rule = rule.expect("loads");
+        let results = run_fixtures(&rule);
+        let hit = results.iter().find(|r| r.expect == "hit").expect("hit");
+        assert!(!hit.passed, "a hit fixture that does not fire is red");
+        assert_eq!(hit.detail, "expected a hit, rule did not fire");
+        assert!(
+            results
+                .iter()
+                .filter(|r| r.expect == "miss")
+                .all(|r| r.passed)
+        );
+
+        let problems = lint(&rule);
+        assert_eq!(
+            problems,
+            vec!["fixture 1 (hit): expected a hit, rule did not fire".to_string()],
+            "one problem, not repeated as a promotion gap"
+        );
+    }
+
+    #[test]
+    fn a_missing_fixture_kind_is_reported_once() {
+        let no_miss = RULE.replace("expect = \"miss\"", "expect = \"hit\"");
+        let (rule, _) = load(&no_miss);
+        let problems = lint(&rule.expect("loads"));
+        assert_eq!(
+            problems
+                .iter()
+                .filter(|p| p.contains("no miss fixture"))
+                .count(),
+            1,
+            "{problems:?}"
+        );
+        assert!(
+            problems
+                .iter()
+                .all(|p| !p.starts_with("cannot be promoted")),
+            "{problems:?}"
+        );
+
+        let no_hit = RULE.replace("expect = \"hit\"", "expect = \"miss\"");
+        let (rule, _) = load(&no_hit);
+        let problems = lint(&rule.expect("loads"));
+        assert!(
+            problems.contains(&"no hit fixture".to_string()),
+            "{problems:?}"
+        );
+        assert_eq!(
+            problems
+                .iter()
+                .filter(|p| p.contains("no hit fixture"))
+                .count(),
+            1,
+            "{problems:?}"
+        );
+    }
+
+    #[test]
+    fn a_weak_note_is_a_promotion_gap_lint_reports() {
+        let weak = RULE.replace(
+            "Implement it, or file a TODO that names the condition for removing it.",
+            "Too short to guide an agent.",
+        );
+        let (rule, _) = load(&weak);
+        let problems = lint(&rule.expect("loads"));
+        assert!(
+            problems
+                .iter()
+                .any(|p| p == "cannot be promoted to error: note is 40 characters or fewer"),
+            "{problems:?}"
+        );
+    }
+
+    #[test]
+    fn declared_hint_and_off_arrive_as_declared() {
+        for (declared, expect) in [("hint", Some(Severity::Hint)), ("off", None)] {
+            let text = RULE.replace(
+                "severity = \"warning\"",
+                &format!("severity = \"{declared}\""),
+            );
+            let (rule, notes) = load(&text);
+            assert!(notes.is_empty(), "{notes:?}");
+            let cfg = cfg_with(rule.expect("loads"), None);
+            assert_eq!(
+                cfg.severity_for("acme/no-placeholder"),
+                expect,
+                "{declared}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unknown_meta_lang_drops_the_rule() {
+        let text = RULE.replace(
+            "severity = \"warning\"",
+            "severity = \"warning\"\nlangs = [\"cobol\"]",
+        );
+        let (rule, notes) = load(&text);
+        assert!(rule.is_none());
+        assert!(
+            notes[0].reason.contains("unknown lang `cobol`"),
+            "{notes:?}"
+        );
+        let ok = RULE.replace(
+            "severity = \"warning\"",
+            "severity = \"warning\"\nlangs = [\"python\"]",
+        );
+        assert!(load(&ok).0.is_some());
+    }
+
+    #[test]
+    fn id_and_producer_length_boundaries() {
+        assert!(valid_producer(&format!("a{}", "b".repeat(31))));
+        assert!(!valid_producer(&format!("a{}", "b".repeat(32))));
+        assert!(valid_rule_id(&format!("a{}", "b".repeat(48))));
+        assert!(!valid_rule_id(&format!("a{}", "b".repeat(49))));
+    }
+
+    #[test]
+    fn file_size_and_count_caps_are_inclusive() {
+        let dir = scratch("cap-bounds");
+        let exact = format!(
+            "{RULE}\n# {}",
+            "x".repeat(usize::try_from(MAX_FILE_BYTES).expect("fits") - RULE.len() - 3)
+        );
+        assert_eq!(exact.len() as u64, MAX_FILE_BYTES);
+        std::fs::write(dir.join("exact.toml"), &exact).expect("write");
+        let mut notes = Vec::new();
+        assert_eq!(discover(Some(&dir), Tier::User, &mut notes).len(), 1);
+        assert!(notes.is_empty(), "{notes:?}");
+        std::fs::write(dir.join("exact.toml"), format!("{exact}x")).expect("write");
+        let mut notes = Vec::new();
+        assert!(discover(Some(&dir), Tier::User, &mut notes).is_empty());
+        assert_eq!(notes.len(), 1, "{notes:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let dir = scratch("cap-count");
+        for i in 0..MAX_FILES_PER_TIER {
+            std::fs::write(dir.join(format!("r{i:03}.toml")), RULE).expect("write");
+        }
+        let mut notes = Vec::new();
+        assert_eq!(
+            discover(Some(&dir), Tier::User, &mut notes).len(),
+            MAX_FILES_PER_TIER
+        );
+        assert!(notes.is_empty(), "exactly the cap is fine: {notes:?}");
+        std::fs::write(dir.join("r999.toml"), RULE).expect("write");
+        let mut notes = Vec::new();
+        assert_eq!(
+            discover(Some(&dir), Tier::User, &mut notes).len(),
+            MAX_FILES_PER_TIER
+        );
+        assert_eq!(notes.len(), 1, "{notes:?}");
+        assert!(notes[0].reason.contains("r999.toml"), "{notes:?}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

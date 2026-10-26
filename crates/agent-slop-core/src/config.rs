@@ -722,6 +722,25 @@ fn apply_section(
             cfg.rules.insert(family, level);
         }
         for (rule_id, level) in rules.overrides.unwrap_or_default() {
+            // Q1 lets the repo tier promote custom rules after strict lint;
+            // plugins are user-tier only (Q2), so on a plugin's rules the
+            // repo tier may only stay at or below what the user tier lets
+            // the plugin report.
+            let producer = rule_id.split('/').next().unwrap_or_default();
+            if tier == Tier::Repo
+                && let Some(plugin) = cfg.plugins.get(producer)
+                && level_rank(level)
+                    > level_rank(plugin.severity).min(level_rank(RuleLevel::Warning))
+            {
+                notes.push(ConfigNote {
+                    tier,
+                    reason: format!(
+                        "[slop.rules.overrides] {rule_id} ignored: the repo tier may only lower \
+                         a plugin rule"
+                    ),
+                });
+                continue;
+            }
             cfg.overrides.insert(rule_id, level);
         }
     }
@@ -1188,6 +1207,44 @@ select = ["ERA001"]
                 .any(|n| n.tier == Tier::Repo && n.reason.contains("typo-family")),
             "{:?}",
             cfg.notes
+        );
+    }
+
+    /// Q1 + Q2: plugins are user-tier only, so the repo tier cannot lift a
+    /// plugin's rule past the cap the user tier set, through the overrides
+    /// table either.
+    #[test]
+    fn repo_overrides_cannot_raise_a_plugin_rule() {
+        const USER: &str = "[slop.plugins.acme]\ncommand = [\"acme-slop\"]\nseverity = \"hint\"\n\n\
+                            [slop.rules.overrides]\n\"acme/user-promoted\" = \"error\"\n";
+        let repo = "[slop.rules.overrides]\n\"acme/x\" = \"error\"\n\"acme/y\" = \"warning\"\n\
+                    \"acme/z\" = \"off\"\n\"acme/user-promoted\" = \"error\"\n";
+        let cfg = resolve(Some(USER), Some(repo));
+        assert_eq!(cfg.overrides.get("acme/x"), None, "{:?}", cfg.overrides);
+        assert_eq!(cfg.overrides.get("acme/y"), None, "above the hint cap");
+        assert_eq!(
+            cfg.overrides.get("acme/z"),
+            Some(&RuleLevel::Off),
+            "the repo tier may lower"
+        );
+        assert_eq!(
+            cfg.overrides.get("acme/user-promoted"),
+            Some(&RuleLevel::Error),
+            "an entry the user tier already set is not the repo tier's to refuse: \
+             the user's own promotion stands"
+        );
+        assert!(
+            cfg.notes
+                .iter()
+                .any(|n| n.tier == Tier::Repo && n.reason.contains("acme/x ignored")),
+            "{:?}",
+            cfg.notes
+        );
+        // The user tier itself may promote a plugin rule.
+        let user_only = resolve(Some(USER), None);
+        assert_eq!(
+            user_only.overrides.get("acme/user-promoted"),
+            Some(&RuleLevel::Error)
         );
     }
 
