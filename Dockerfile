@@ -6,13 +6,13 @@
 #
 # One Dockerfile ships any workspace binary:
 #   docker build --build-arg BIN=<crate-bin> .
-# selects which crate's `[[bin]]` to compile (defaults to `app`). The chosen
-# binary is always installed under the stable name `app`, so ENTRYPOINT never
+# selects which crate's `[[bin]]` to compile (defaults to `agent-slop`). The
+# chosen binary is installed under the stable name `app`, so ENTRYPOINT never
 # changes regardless of which crate was built.
 
 # Global build arg (must be declared before the first FROM). ARGs do not cross
 # stage boundaries, so each stage that uses it re-declares `ARG BIN` below.
-ARG BIN=app
+ARG BIN=agent-slop
 
 # The tag tracks rust-toolchain.toml `channel`; Renovate bumps both together.
 FROM lukemathwalker/cargo-chef:latest-rust-1.99.1 AS chef

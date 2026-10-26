@@ -26,18 +26,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # EDIT ME to add binaries — one matrix entry per workspace binary.
-        # templates/rust-workspace/Dockerfile takes `--build-arg BIN=<crate-bin>` and
-        # always installs the result as `app`, so each binary needs its own entry here.
-        # Copy the block below, setting build_arg_value to the crate's [[bin]] name and
-        # image_suffix to a matching dash suffix (Q1 convention), e.g.:
-        #   - image_suffix: -worker
-        #     build_arg_name: BIN
-        #     build_arg_value: worker
+        # One matrix entry per workspace binary: the Dockerfile takes
+        # `--build-arg BIN=<crate-bin>` and installs it as `app`.
         include:
-          - image_suffix: -app
+          - image_suffix: -agent-slop
             build_arg_name: BIN
-            build_arg_value: app
+            build_arg_value: agent-slop
 
     steps:
       - name: Checkout
