@@ -129,8 +129,10 @@ by which an imported linter finding can reach `error`.
 | `paths_extend` | list of globs | concatenated across tiers, user first | Additive exclusions a repo adds to a user's list. |
 | `scoped` | list of `{paths, rules}` tables | highest tier wins whole | Path/rule pairs exempting those paths from those rules alone. |
 
-Globs have exactly two documented shapes; anything else is compared
-literally:
+Globs have exactly two documented shapes. Any other pattern falls back
+to star matching: `*` matches any run of characters, including `/`, so
+`tests/*.py` covers every `.py` under `tests/` at any depth — prefer
+`tests/**` when that is what you mean:
 
 - `vendor/**` — the directory subtree;
 - `**/*.generated.*` — a file-name pattern at any depth.
