@@ -42,7 +42,7 @@ nix run github:Arkptz/agent-slop -- scan --since main   # only what this branch 
   meta, review jargon, comments that restate the code, TODOs without a
   removal condition, unsourced performance and constraint claims, hedging,
   step narration, and more. Each rule has a page with bad and good
-  examples in the [rule reference](mdbook/guide/rules/index.md).
+  examples in the [rule reference](https://arkptz.github.io/agent-slop/rules/index.html).
 - **Twelve languages**: Rust, Java, Python, Go, TypeScript, TSX,
   JavaScript, Bash, Nix, C, C++ and YAML. Most phrase lists cover English
   and Russian.
@@ -91,7 +91,7 @@ programs.agent-slop = {
 
 The module installs the binary, writes the user config tier and the grok
 hook file, and lints every custom rule you declare at build time. Full
-option reference: [Installation](mdbook/guide/installation.md).
+option reference: [Installation](https://arkptz.github.io/agent-slop/installation.html).
 
 </details>
 
@@ -136,7 +136,7 @@ both understood.
 | `SessionStart` | pins the ratchet baseline | always 0 |
 | `Stop` | names every added error, its legitimate exception and the suppression line | 0 allow, 2 block |
 
-Details: [Hooks and the ratchet](mdbook/guide/hooks-and-the-ratchet.md).
+Details: [Hooks and the ratchet](https://arkptz.github.io/agent-slop/hooks-and-the-ratchet.html).
 
 </details>
 
@@ -148,22 +148,22 @@ Configuration has three tiers: built-ins, the user file
 `.agent-hooks.toml`. A repository sets its own rule levels and mode, like
 any linter config; only the user tier may declare what executes.
 
-- [Configuration](mdbook/guide/configuration.md): every `[slop]` key.
-- [Custom rules](mdbook/guide/custom-rules.md): one TOML file per rule,
+- [Configuration](https://arkptz.github.io/agent-slop/configuration.html): every `[slop]` key.
+- [Custom rules](https://arkptz.github.io/agent-slop/custom-rules.html): one TOML file per rule,
   with fixtures; promotion to `error` requires green strict lint.
-- [Tuning built-ins](mdbook/guide/tuning.md): extend or prune phrase
+- [Tuning built-ins](https://arkptz.github.io/agent-slop/tuning.html): extend or prune phrase
   lists, adjust thresholds within audited ranges.
-- [Writing a plugin](mdbook/guide/plugins.md): the `agent-slop-plugin/1`
+- [Writing a plugin](https://arkptz.github.io/agent-slop/plugins.html): the `agent-slop-plugin/1`
   protocol (`describe`, then `check`).
 
 </details>
 
 ## Documentation
 
-The [user guide](mdbook/guide/introduction.md) covers the CLI, the three
+The [user guide](https://arkptz.github.io/agent-slop/) covers the CLI, the three
 configuration tiers, every rule, suppressions, the Stop gate, linter
 adapters, custom rules, tuning, plugins, telemetry and the optional judge.
-Build it with `mdbook build mdbook`.
+Build it with `mdbook build mdbook`; the rendered guide is at <https://arkptz.github.io/agent-slop/>.
 
 ## Library crates
 
