@@ -832,11 +832,18 @@ fn repo_override_refused(
     let Some(plugin) = cfg.plugins.get(producer) else {
         return false;
     };
-    let cap = plugin
-        .severity
-        .unwrap_or(RuleLevel::Warning)
-        .rank()
-        .min(RuleLevel::Warning.rank());
+    // The user tier is applied first, so its own entry for this rule (an
+    // `off` included) is already in `cfg.overrides` and is the cap.
+    let cap = cfg.overrides.get(rule_id).map_or_else(
+        || {
+            plugin
+                .severity
+                .unwrap_or(RuleLevel::Warning)
+                .rank()
+                .min(RuleLevel::Warning.rank())
+        },
+        |user| user.rank(),
+    );
     if level.rank() <= cap {
         return false;
     }
@@ -1304,6 +1311,24 @@ select = ["ERA001"]
             user_only.overrides.get("acme/user-promoted"),
             Some(&RuleLevel::Error)
         );
+    }
+
+    /// The cap is the user tier's own entry for the rule when it has one:
+    /// a rule the user turned off or down stays there.
+    #[test]
+    fn repo_overrides_cannot_lift_a_plugin_rule_above_the_user_entry() {
+        const USER: &str = "[slop.plugins.acme]\ncommand = [\"acme-slop\"]\n\n\
+                            [slop.rules.overrides]\n\"acme/off\" = \"off\"\n\"acme/hint\" = \"hint\"\n";
+        let repo =
+            "[slop.rules.overrides]\n\"acme/off\" = \"warning\"\n\"acme/hint\" = \"warning\"\n";
+        let cfg = resolve(Some(USER), Some(repo));
+        assert_eq!(cfg.overrides.get("acme/off"), Some(&RuleLevel::Off));
+        assert_eq!(cfg.overrides.get("acme/hint"), Some(&RuleLevel::Hint));
+        let lowered = resolve(
+            Some(USER),
+            Some("[slop.rules.overrides]\n\"acme/hint\" = \"off\"\n"),
+        );
+        assert_eq!(lowered.overrides.get("acme/hint"), Some(&RuleLevel::Off));
     }
 
     #[test]
