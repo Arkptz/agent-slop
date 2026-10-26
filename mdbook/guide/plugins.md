@@ -19,9 +19,11 @@ a minor release does not break an older host; a breaking change bumps the
 ## Declaring it
 
 Only the **user tier** may declare a plugin — the tier a Nix module owns.
-A cloned repository may not choose what executes: `[slop.plugins.<name>]`
-in `.agent-hooks.toml` may set `enable = false` and lower `severity`, and
-everything else is refused with a config note.
+A cloned repository may not choose what executes: `command`,
+`env_passthrough` and `timeout_ms` in `.agent-hooks.toml` are refused with
+a config note. Levels are the repository's, as for any linter: its
+`[slop.plugins.<name>]` may set `enable` and `severity` either way, and
+its `[slop.rules.overrides]` may raise or lower any plugin rule.
 
 ```toml
 # ~/.config/agent-slop/config.toml

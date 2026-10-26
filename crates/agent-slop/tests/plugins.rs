@@ -251,9 +251,8 @@ fn repo_tier_cannot_declare_a_plugin_command() {
         "a repo-declared plugin must not run: {v}"
     );
     assert!(err.contains("only the user tier may set it"), "{err}");
-    assert!(err.contains("enable = true ignored"), "{err}");
 
-    // A severity may only be lowered by the repo tier.
+    // The repo tier sets the level of a plugin the user installed.
     let s2 = Scratch::new("trust-lower");
     s2.write_plugin("acme-slop", PLUGIN);
     s2.user_config("[slop.plugins.acme]\ncommand = [\"acme-slop\"]\n");
@@ -270,18 +269,21 @@ fn repo_tier_cannot_declare_a_plugin_command() {
     let s3 = Scratch::new("trust-raise");
     s3.write_plugin("acme-slop", PLUGIN);
     s3.user_config("[slop.plugins.acme]\ncommand = [\"acme-slop\"]\n");
-    s3.repo_config("[slop.plugins.acme]\nseverity = \"error\"\n");
+    s3.repo_config(
+        "[slop.plugins.acme]\nseverity = \"error\"\n\n\
+         [slop.rules.overrides]\n\"acme/vague-why\" = \"error\"\n",
+    );
     s3.write("a.py", RULE_1);
     let (_, v, err) = s3.scan();
     assert!(
-        err.contains("the repo tier may only lower it"),
-        "raising must be refused: {err}"
+        !err.contains("ignored"),
+        "raising is the repo's call: {err}"
     );
     assert!(
         v["findings"].as_array().is_some_and(|fs| fs
             .iter()
-            .any(|f| f["rule"] == "acme/vague-why" && f["severity"] == "warning")),
-        "capped at warning anyway: {v}"
+            .any(|f| f["rule"] == "acme/vague-why" && f["severity"] == "error")),
+        "the repo tier raised it: {v}"
     );
 }
 

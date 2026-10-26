@@ -738,9 +738,6 @@ fn apply_section(
             cfg.rules.insert(family, level);
         }
         for (rule_id, level) in rules.overrides.unwrap_or_default() {
-            if repo_override_refused(cfg, tier, &rule_id, level, notes) {
-                continue;
-            }
             cfg.overrides.insert(rule_id, level);
         }
     }
@@ -814,51 +811,10 @@ fn apply_section(
     }
 }
 
-/// True when a `[slop.rules.overrides]` entry is refused. Q1 lets the repo
-/// tier promote custom rules after strict lint, but plugins are user-tier
-/// only (Q2): on a plugin's rules the repo tier may only stay at or below
-/// the severity the user tier set, capped at warning.
-fn repo_override_refused(
-    cfg: &ResolvedConfig,
-    tier: Tier,
-    rule_id: &str,
-    level: RuleLevel,
-    notes: &mut Vec<ConfigNote>,
-) -> bool {
-    if tier != Tier::Repo {
-        return false;
-    }
-    let producer = rule_id.split('/').next().unwrap_or_default();
-    let Some(plugin) = cfg.plugins.get(producer) else {
-        return false;
-    };
-    // The user tier is applied first, so its own entry for this rule (an
-    // `off` included) is already in `cfg.overrides` and is the cap.
-    let cap = cfg.overrides.get(rule_id).map_or_else(
-        || {
-            plugin
-                .severity
-                .unwrap_or(RuleLevel::Warning)
-                .rank()
-                .min(RuleLevel::Warning.rank())
-        },
-        |user| user.rank(),
-    );
-    if level.rank() <= cap {
-        return false;
-    }
-    notes.push(ConfigNote {
-        tier,
-        reason: format!(
-            "[slop.rules.overrides] {rule_id} ignored: the repo tier may only lower a plugin rule"
-        ),
-    });
-    true
-}
-
-/// Fold one tier's `[slop.plugins.<name>]` entry. The repo tier is a
-/// restricted voice: no `command`, no `env_passthrough`, no `timeout_ms`,
-/// no `enable = true`, and a `severity` only when it is lower.
+/// Fold one tier's `[slop.plugins.<name>]` entry. What executes is the
+/// user tier's alone: the repo tier cannot set `command`, `env_passthrough`
+/// or `timeout_ms`. Levels belong to the repository like any linter's: it
+/// may enable, disable, raise or lower a plugin the user installed.
 fn apply_plugin(
     cfg: &mut ResolvedConfig,
     name: &str,
@@ -911,21 +867,11 @@ fn apply_plugin(
                     ));
                 }
             }
-            match raw.enable {
-                Some(false) => entry.enable = false,
-                Some(true) => note(format!(
-                    "[slop.plugins.{name}] enable = true ignored: the repo tier may only disable"
-                )),
-                None => {}
+            if let Some(enable) = raw.enable {
+                entry.enable = enable;
             }
             if let Some(severity) = raw.severity {
-                if severity.rank() <= entry.severity.unwrap_or(RuleLevel::Warning).rank() {
-                    entry.severity = Some(severity);
-                } else {
-                    note(format!(
-                        "[slop.plugins.{name}] severity ignored: the repo tier may only lower it"
-                    ));
-                }
+                entry.severity = Some(severity);
             }
         }
     }
@@ -1275,60 +1221,24 @@ select = ["ERA001"]
         );
     }
 
-    /// Q1 + Q2: plugins are user-tier only, so the repo tier cannot lift a
-    /// plugin's rule past the cap the user tier set, through the overrides
-    /// table either.
+    /// Rule levels are the repository's to choose, plugin rules included:
+    /// the repo tier's override wins over the user tier's in both
+    /// directions, as for every other rule.
     #[test]
-    fn repo_overrides_cannot_raise_a_plugin_rule() {
+    fn repo_overrides_set_plugin_rule_levels_freely() {
         const USER: &str = "[slop.plugins.acme]\ncommand = [\"acme-slop\"]\nseverity = \"hint\"\n\n\
-                            [slop.rules.overrides]\n\"acme/user-promoted\" = \"error\"\n";
-        let repo = "[slop.rules.overrides]\n\"acme/x\" = \"error\"\n\"acme/y\" = \"warning\"\n\
-                    \"acme/z\" = \"off\"\n\"acme/user-promoted\" = \"error\"\n";
+                            [slop.rules.overrides]\n\"acme/off\" = \"off\"\n\"acme/err\" = \"error\"\n";
+        let repo = "[slop.rules.overrides]\n\"acme/off\" = \"error\"\n\"acme/err\" = \"off\"\n\
+                    \"acme/new\" = \"warning\"\n";
         let cfg = resolve(Some(USER), Some(repo));
-        assert_eq!(cfg.overrides.get("acme/x"), None, "{:?}", cfg.overrides);
-        assert_eq!(cfg.overrides.get("acme/y"), None, "above the hint cap");
-        assert_eq!(
-            cfg.overrides.get("acme/z"),
-            Some(&RuleLevel::Off),
-            "the repo tier may lower"
-        );
-        assert_eq!(
-            cfg.overrides.get("acme/user-promoted"),
-            Some(&RuleLevel::Error),
-            "an entry the user tier already set is not the repo tier's to refuse: \
-             the user's own promotion stands"
-        );
+        assert_eq!(cfg.overrides.get("acme/off"), Some(&RuleLevel::Error));
+        assert_eq!(cfg.overrides.get("acme/err"), Some(&RuleLevel::Off));
+        assert_eq!(cfg.overrides.get("acme/new"), Some(&RuleLevel::Warning));
         assert!(
-            cfg.notes
-                .iter()
-                .any(|n| n.tier == Tier::Repo && n.reason.contains("acme/x ignored")),
+            cfg.notes.iter().all(|n| !n.reason.contains("acme/")),
             "{:?}",
             cfg.notes
         );
-        // The user tier itself may promote a plugin rule.
-        let user_only = resolve(Some(USER), None);
-        assert_eq!(
-            user_only.overrides.get("acme/user-promoted"),
-            Some(&RuleLevel::Error)
-        );
-    }
-
-    /// The cap is the user tier's own entry for the rule when it has one:
-    /// a rule the user turned off or down stays there.
-    #[test]
-    fn repo_overrides_cannot_lift_a_plugin_rule_above_the_user_entry() {
-        const USER: &str = "[slop.plugins.acme]\ncommand = [\"acme-slop\"]\n\n\
-                            [slop.rules.overrides]\n\"acme/off\" = \"off\"\n\"acme/hint\" = \"hint\"\n";
-        let repo =
-            "[slop.rules.overrides]\n\"acme/off\" = \"warning\"\n\"acme/hint\" = \"warning\"\n";
-        let cfg = resolve(Some(USER), Some(repo));
-        assert_eq!(cfg.overrides.get("acme/off"), Some(&RuleLevel::Off));
-        assert_eq!(cfg.overrides.get("acme/hint"), Some(&RuleLevel::Hint));
-        let lowered = resolve(
-            Some(USER),
-            Some("[slop.rules.overrides]\n\"acme/hint\" = \"off\"\n"),
-        );
-        assert_eq!(lowered.overrides.get("acme/hint"), Some(&RuleLevel::Off));
     }
 
     #[test]
