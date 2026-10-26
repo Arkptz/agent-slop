@@ -170,6 +170,25 @@ fn committed_slop_does_not_block() {
     s.hook(&stop(sid)).assert_rc(0, "Stop over inherited debt");
 }
 
+/// A line-scoped suppression also carries a LINTER finding (deadnix on
+/// a generated bun.nix is the shipped example).
+#[test]
+fn a_suppression_carries_a_linter_finding() {
+    let s = Scratch::new("linter-allow");
+    let sid = "scenario-linter-allow";
+    s.hook(&session_start(sid)).assert_rc(0, "SessionStart");
+    s.write(
+        "flake.nix",
+        "# agent-slop: allow deadnix/dead-code -- generated list, see template/frontend/base/bun.nix\n{ unused-arg }: 1\n",
+    );
+    let out = s.hook(&stop(sid));
+    out.assert_rc(0, "a carried linter finding never blocks");
+    let r = s.hook(&format!(
+        r#"{{"hook_event_name":"Stop","session_id":"{sid}","reason":"end_turn"}}"#
+    ));
+    r.assert_rc(0, "end_turn Stop with the same carried finding");
+}
+
 /// Grok's normal turn-end Stop carries `reason: "end_turn"` — the scan
 /// must still run and block. A regression here flips precondition 2 and
 /// silences the gate on every ordinary turn (POL-026).

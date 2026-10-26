@@ -148,6 +148,7 @@ fn run_linters(
     args: &ScanArgs,
     root: &Path,
     rel_targets: &[String],
+    file_lines: &std::collections::BTreeMap<String, Vec<&str>>,
 ) -> (Vec<Finding>, Vec<Skipped>, BTreeMap<String, String>) {
     let selection = args
         .linters
@@ -164,7 +165,15 @@ fn run_linters(
         match linters::run(adapter, root, rel_targets, &index) {
             Ok(stdout) => {
                 let raws = (adapter.parse)(&stdout);
-                findings.extend(linters::to_findings(cfg, adapter.tool, raws, root));
+                let mut found = linters::to_findings(cfg, adapter.tool, raws, root);
+                // Line-scoped suppressions bind to linter findings too:
+                // the file's lines are already in hand here.
+                for f in &mut found {
+                    if let Some(lines) = file_lines.get(&f.file) {
+                        agent_slop_core::rules::apply_suppression(f, lines);
+                    }
+                }
+                findings.extend(found);
                 ran_tools.push(adapter.tool);
             }
             Err(skip) => skipped_tools.push(skip),
@@ -276,8 +285,13 @@ pub(crate) fn run(cfg: &ResolvedConfig, args: &ScanArgs, cwd: &Path, git: bool) 
     } = walk(cfg, &root, &targets, deadline);
 
     let rel_targets: Vec<String> = targets.iter().map(|p| relative(&root, p)).collect();
+    let file_lines: std::collections::BTreeMap<String, Vec<&str>> = rel_targets
+        .iter()
+        .zip(&contents)
+        .filter_map(|(rel, c)| c.as_ref().map(|text| (rel.clone(), text.lines().collect())))
+        .collect();
     let (linter_findings, mut skipped_tools, mut linter_status) =
-        run_linters(cfg, args, &root, &rel_targets);
+        run_linters(cfg, args, &root, &rel_targets, &file_lines);
     findings.extend(linter_findings);
 
     let contents_named: Vec<(String, String)> = targets
