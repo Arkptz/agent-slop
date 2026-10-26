@@ -86,6 +86,17 @@ impl RuleLevel {
         }
     }
 
+    /// Strictness order: `off` < `hint` < `warning` < `error`.
+    #[must_use]
+    pub fn rank(self) -> u8 {
+        match self {
+            RuleLevel::Off => 0,
+            RuleLevel::Hint => 1,
+            RuleLevel::Warning => 2,
+            RuleLevel::Error => 3,
+        }
+    }
+
     /// `off` is no severity at all: the rule does not fire.
     #[must_use]
     pub fn severity(self) -> Option<Severity> {
@@ -593,7 +604,10 @@ struct SlopSection {
     judge: Option<RawJudge>,
     custom: Option<RawCustom>,
     tune: Option<BTreeMap<String, toml::Value>>,
-    plugins: Option<BTreeMap<String, RawPlugin>>,
+    /// Kept as raw TOML and typed one entry at a time: a bad plugin table
+    /// drops that plugin with a note, not the whole tier (which would take
+    /// `mode = "block"` with it).
+    plugins: Option<BTreeMap<String, toml::Value>>,
 }
 
 /// `[slop.plugins.<name>]`, every key optional per tier.
@@ -722,23 +736,7 @@ fn apply_section(
             cfg.rules.insert(family, level);
         }
         for (rule_id, level) in rules.overrides.unwrap_or_default() {
-            // Q1 lets the repo tier promote custom rules after strict lint;
-            // plugins are user-tier only (Q2), so on a plugin's rules the
-            // repo tier may only stay at or below what the user tier lets
-            // the plugin report.
-            let producer = rule_id.split('/').next().unwrap_or_default();
-            if tier == Tier::Repo
-                && let Some(plugin) = cfg.plugins.get(producer)
-                && level_rank(level)
-                    > level_rank(plugin.severity).min(level_rank(RuleLevel::Warning))
-            {
-                notes.push(ConfigNote {
-                    tier,
-                    reason: format!(
-                        "[slop.rules.overrides] {rule_id} ignored: the repo tier may only lower \
-                         a plugin rule"
-                    ),
-                });
+            if repo_override_refused(cfg, tier, &rule_id, level, notes) {
                 continue;
             }
             cfg.overrides.insert(rule_id, level);
@@ -762,8 +760,14 @@ fn apply_section(
         tune::merge_tier(&mut cfg.tune, raw_tune, tier, notes);
     }
     if let Some(plugins) = section.plugins {
-        for (name, raw) in plugins {
-            apply_plugin(cfg, &name, raw, tier, notes);
+        for (name, value) in plugins {
+            match value.try_into::<RawPlugin>() {
+                Ok(raw) => apply_plugin(cfg, &name, raw, tier, notes),
+                Err(err) => notes.push(ConfigNote {
+                    tier,
+                    reason: format!("[slop.plugins.{name}] dropped, wrong types: {err}"),
+                }),
+            }
         }
     }
     if let Some(judge) = section.judge {
@@ -808,14 +812,35 @@ fn apply_section(
     }
 }
 
-/// Rank used to let the repo tier only lower a plugin's severity.
-fn level_rank(level: RuleLevel) -> u8 {
-    match level {
-        RuleLevel::Error => 3,
-        RuleLevel::Warning => 2,
-        RuleLevel::Hint => 1,
-        RuleLevel::Off => 0,
+/// True when a `[slop.rules.overrides]` entry is refused. Q1 lets the repo
+/// tier promote custom rules after strict lint, but plugins are user-tier
+/// only (Q2): on a plugin's rules the repo tier may only stay at or below
+/// the severity the user tier set, capped at warning.
+fn repo_override_refused(
+    cfg: &ResolvedConfig,
+    tier: Tier,
+    rule_id: &str,
+    level: RuleLevel,
+    notes: &mut Vec<ConfigNote>,
+) -> bool {
+    if tier != Tier::Repo {
+        return false;
     }
+    let producer = rule_id.split('/').next().unwrap_or_default();
+    let Some(plugin) = cfg.plugins.get(producer) else {
+        return false;
+    };
+    let cap = plugin.severity.rank().min(RuleLevel::Warning.rank());
+    if level.rank() <= cap {
+        return false;
+    }
+    notes.push(ConfigNote {
+        tier,
+        reason: format!(
+            "[slop.rules.overrides] {rule_id} ignored: the repo tier may only lower a plugin rule"
+        ),
+    });
+    true
 }
 
 /// Fold one tier's `[slop.plugins.<name>]` entry. The repo tier is a
@@ -881,7 +906,7 @@ fn apply_plugin(
                 None => {}
             }
             if let Some(severity) = raw.severity {
-                if level_rank(severity) <= level_rank(entry.severity) {
+                if severity.rank() <= entry.severity.rank() {
                     entry.severity = severity;
                 } else {
                     note(format!(
@@ -1206,6 +1231,33 @@ select = ["ERA001"]
                 .iter()
                 .any(|n| n.tier == Tier::Repo && n.reason.contains("typo-family")),
             "{:?}",
+            cfg.notes
+        );
+    }
+
+    /// A mistyped plugin entry (a negative `timeout_ms`) drops that plugin
+    /// alone: the rest of the tier, `mode = "block"` included, stands.
+    #[test]
+    fn a_bad_plugin_entry_drops_only_that_plugin() {
+        let user = "[slop]\nmode = \"block\"\n\n\
+                    [slop.plugins.bad]\ncommand = [\"bad-slop\"]\ntimeout_ms = -1\n\n\
+                    [slop.plugins.good]\ncommand = [\"good-slop\"]\ntimeout_ms = 500\n";
+        let cfg = resolve(Some(user), None);
+        assert_eq!(cfg.mode, Mode::Block, "the tier survives");
+        assert!(!cfg.plugins.contains_key("bad"), "{:?}", cfg.plugins);
+        assert_eq!(cfg.plugins["good"].timeout_ms, 500);
+        assert!(
+            cfg.notes
+                .iter()
+                .any(|n| n.tier == Tier::User && n.reason.contains("[slop.plugins.bad] dropped")),
+            "{:?}",
+            cfg.notes
+        );
+        assert!(
+            cfg.notes
+                .iter()
+                .all(|n| !n.reason.contains("config dropped")),
+            "no whole-tier drop: {:?}",
             cfg.notes
         );
     }

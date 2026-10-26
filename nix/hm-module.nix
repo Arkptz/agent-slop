@@ -205,8 +205,9 @@ in {
             default = true;
           };
           timeout_ms = lib.mkOption {
-            type = lib.types.int;
+            type = lib.types.ints.positive;
             default = 2000;
+            description = "Wall-clock budget of one call, in milliseconds.";
           };
           severity = lib.mkOption {
             type = lib.types.enum ["error" "warning" "hint" "off"];

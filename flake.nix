@@ -115,6 +115,22 @@
         ];
         hmMinimal = hmEval [{programs.agent-slop.enable = true;}];
 
+        # A negative timeout_ms must fail evaluation (POL-026 negative
+        # control): the option is a positive int, so the typo cannot reach
+        # the binary and drop the user tier's mode = "block".
+        hmNegative = hmEval [
+          {
+            programs.agent-slop = {
+              enable = true;
+              mode = "block";
+              plugins.bad = {
+                command = ["/run/current-system/sw/bin/bad-slop"];
+                timeout_ms = -1;
+              };
+            };
+          }
+        ];
+
         # A rule that passes `rules lint` and one that must not: the second
         # has a hit fixture but no miss fixture, so the check below fails if
         # the lint step stops catching that.
@@ -211,6 +227,20 @@
               fi
               touch $out
             '';
+
+          # The negative plugin timeout must fail at eval time; tryEval turns
+          # the evaluation error into a value this check can assert on.
+          hm-rejects-a-negative-plugin-timeout = let
+            attempt = builtins.tryEval (builtins.deepSeq hmNegative.config.xdg.configFile."agent-slop/config.toml".source.outPath true);
+          in
+            pkgs.runCommand "agent-slop-hm-negative-timeout-rejected" {} (
+              if attempt.success
+              then ''
+                echo "a negative plugin timeout_ms evaluated" >&2
+                exit 1
+              ''
+              else "touch $out"
+            );
 
           hm-module = let
             full = hmFull.config;
