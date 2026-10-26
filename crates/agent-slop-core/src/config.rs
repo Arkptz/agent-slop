@@ -158,9 +158,11 @@ pub struct ResolvedPlugin {
     pub enable: bool,
     /// Wall-clock budget of one call.
     pub timeout_ms: u64,
-    /// Cap for what the plugin may report; an `error` here is still capped
-    /// at `warning` unless an `overrides` entry names the rule.
-    pub severity: RuleLevel,
+    /// The level every rule of the plugin reports at, when a tier set one;
+    /// `None` leaves each rule at the `default_level` its manifest
+    /// declares. An `error` is still capped at `warning` unless an
+    /// `overrides` entry names the rule.
+    pub severity: Option<RuleLevel>,
     /// Opaque table handed to the plugin in the request.
     pub settings: toml::Value,
     /// Environment variables forwarded on top of the fixed allowlist.
@@ -173,7 +175,7 @@ impl Default for ResolvedPlugin {
             command: Vec::new(),
             enable: true,
             timeout_ms: 2000,
-            severity: RuleLevel::Warning,
+            severity: None,
             settings: toml::Value::Table(toml::map::Map::new()),
             env_passthrough: Vec::new(),
         }
@@ -830,7 +832,11 @@ fn repo_override_refused(
     let Some(plugin) = cfg.plugins.get(producer) else {
         return false;
     };
-    let cap = plugin.severity.rank().min(RuleLevel::Warning.rank());
+    let cap = plugin
+        .severity
+        .unwrap_or(RuleLevel::Warning)
+        .rank()
+        .min(RuleLevel::Warning.rank());
     if level.rank() <= cap {
         return false;
     }
@@ -882,7 +888,7 @@ fn apply_plugin(
                 entry.timeout_ms = timeout_ms;
             }
             if let Some(severity) = raw.severity {
-                entry.severity = severity;
+                entry.severity = Some(severity);
             }
         }
         Tier::Repo => {
@@ -906,8 +912,8 @@ fn apply_plugin(
                 None => {}
             }
             if let Some(severity) = raw.severity {
-                if severity.rank() <= entry.severity.rank() {
-                    entry.severity = severity;
+                if severity.rank() <= entry.severity.unwrap_or(RuleLevel::Warning).rank() {
+                    entry.severity = Some(severity);
                 } else {
                     note(format!(
                         "[slop.plugins.{name}] severity ignored: the repo tier may only lower it"

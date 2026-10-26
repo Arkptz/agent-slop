@@ -132,8 +132,14 @@ impl Scratch {
 
     /// One invocation with the scratch `PATH` and `$HOME`.
     fn run(&self, args: &[&str]) -> (i32, String, String) {
+        self.run_with_env(args, &[])
+    }
+
+    /// [`Scratch::run`] with extra variables in the host's environment.
+    fn run_with_env(&self, args: &[&str], extra: &[(&str, &str)]) -> (i32, String, String) {
         let out = Command::new(env!("CARGO_BIN_EXE_agent-slop"))
             .args(args)
+            .envs(extra.iter().copied())
             .current_dir(&self.repo)
             .env("HOME", &self.home)
             .env("XDG_CACHE_HOME", self.root.join("cache"))
@@ -157,7 +163,14 @@ impl Scratch {
     }
 
     fn scan(&self) -> (i32, serde_json::Value, String) {
-        let (code, out, err) = self.run(&["scan", "--format", "json"]);
+        self.scan_args(&[])
+    }
+
+    /// `scan --format json` plus extra arguments, with the envelope parsed.
+    fn scan_args(&self, extra: &[&str]) -> (i32, serde_json::Value, String) {
+        let mut args = vec!["scan", "--format", "json"];
+        args.extend_from_slice(extra);
+        let (code, out, err) = self.run(&args);
         let value = out
             .lines()
             .find(|l| l.starts_with('{'))
@@ -495,10 +508,15 @@ fn posttooluse_payload_carries_plugin_advice_and_survives_failures() {
 }
 
 fn run_hook(s: &Scratch, payload: &str) -> (i32, String, String) {
+    run_hook_with_env(s, payload, &[])
+}
+
+fn run_hook_with_env(s: &Scratch, payload: &str, extra: &[(&str, &str)]) -> (i32, String, String) {
     use std::io::Write;
     use std::process::Stdio;
     let mut child = Command::new(env!("CARGO_BIN_EXE_agent-slop"))
         .arg("hook")
+        .envs(extra.iter().copied())
         .current_dir(&s.repo)
         .env("HOME", &s.home)
         .env("XDG_CACHE_HOME", s.root.join("cache"))
@@ -529,4 +547,288 @@ fn run_hook(s: &Scratch, payload: &str) -> (i32, String, String) {
         String::from_utf8_lossy(&out.stdout).into_owned(),
         String::from_utf8_lossy(&out.stderr).into_owned(),
     )
+}
+
+const HOOK_PAYLOAD: &str = r#"{"hook_event_name":"PostToolUse","tool_name":"Write","tool_input":{"file_path":"a.py"},"session_id":"s1"}"#;
+
+/// A comment plugin whose single rule is announced at `$LEVEL`.
+fn leveled_plugin(name: &str, level: &str) -> String {
+    format!(
+        r#"#!/bin/sh
+case "$1" in
+  describe) echo '{{"protocol":1,"name":"{name}","version":"1","input":"comments","cost":"A","rules":[{{"id":"r","default_level":"{level}"}}]}}' ;;
+  check)
+    cat >/dev/null
+    echo '{{"protocol":1,"findings":[{{"rule":"r","path":"a.py","comment":0,"message":"m"}}]}}' ;;
+esac
+"#
+    )
+}
+
+/// Survivors of the r1b review: a plugin the host killed must not leave a
+/// process tree behind (CWE-404). The plugin forks a long `sleep` whose pid
+/// it records, then hangs; after the timeout that pid must be gone.
+#[test]
+fn a_timed_out_plugin_leaves_no_grandchildren() {
+    let s = Scratch::new("orphans");
+    let pidfile = s.root.join("grandchild.pid");
+    s.write_plugin(
+        "fork-slop",
+        &format!(
+            r#"#!/bin/sh
+case "$1" in
+  describe) echo '{{"protocol":1,"name":"fork","version":"1","input":"comments","cost":"A","rules":[{{"id":"x","default_level":"warning"}}]}}' ;;
+  check) sleep 60 & echo $! > {pid}; sleep 60 ;;
+esac
+"#,
+            pid = pidfile.display()
+        ),
+    );
+    s.user_config("[slop.plugins.fork]\ncommand = [\"fork-slop\"]\ntimeout_ms = 300\n");
+    s.write("a.py", RULE_1);
+    let (_, v, _) = s.scan();
+    assert!(
+        v["skipped"]
+            .as_array()
+            .is_some_and(|sk| sk.iter().any(|x| x["reason"] == "timeout")),
+        "{v}"
+    );
+    let pid: i32 = std::fs::read_to_string(&pidfile)
+        .expect("the plugin recorded its grandchild")
+        .trim()
+        .parse()
+        .expect("pid");
+    // SIGKILL delivery and reaping by init are asynchronous.
+    let mut alive = true;
+    for _ in 0..40 {
+        alive = Path::new(&format!("/proc/{pid}")).exists()
+            && std::fs::read_to_string(format!("/proc/{pid}/stat"))
+                .is_ok_and(|st| !st.contains(") Z "));
+        if !alive {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    if alive {
+        let _ = Command::new("kill").arg("-9").arg(pid.to_string()).status();
+    }
+    assert!(!alive, "grandchild {pid} survived the host's kill");
+}
+
+/// A manifest's `default_level` applies when no tier set a severity.
+#[test]
+fn the_manifest_default_level_applies_without_a_configured_severity() {
+    for (declared, expect) in [
+        ("hint", Some("hint")),
+        ("warning", Some("warning")),
+        ("off", None),
+    ] {
+        let s = Scratch::new(&format!("lvl-{declared}"));
+        s.write_plugin("lvl-slop", &leveled_plugin("lvl", declared));
+        s.user_config("[slop.plugins.lvl]\ncommand = [\"lvl-slop\"]\n");
+        s.write("a.py", "# a comment\nx = 1\n");
+        let (_, v, err) = s.scan();
+        let got = v["findings"]
+            .as_array()
+            .and_then(|fs| fs.iter().find(|f| f["rule"] == "lvl/r"))
+            .map(|f| f["severity"].as_str().unwrap_or("?").to_string());
+        assert_eq!(got.as_deref(), expect, "declared {declared}: {v} {err}");
+    }
+    // A configured severity still wins over the manifest.
+    let s = Scratch::new("lvl-cfg");
+    s.write_plugin("lvl-slop", &leveled_plugin("lvl", "hint"));
+    s.user_config("[slop.plugins.lvl]\ncommand = [\"lvl-slop\"]\nseverity = \"warning\"\n");
+    s.write("a.py", "# a comment\nx = 1\n");
+    let (_, v, _) = s.scan();
+    assert!(
+        v["findings"].as_array().is_some_and(|fs| fs
+            .iter()
+            .any(|f| f["rule"] == "lvl/r" && f["severity"] == "warning")),
+        "{v}"
+    );
+}
+
+/// The describe cache keys on every argv element that is a file: an
+/// interpreter-launched script that gains a rule is not served its old
+/// manifest.
+#[test]
+fn editing_an_interpreter_launched_script_invalidates_the_manifest_cache() {
+    let s = Scratch::new("argv-cache");
+    let script = s.bin.join("plugin.sh");
+    let body = |rules: &str| {
+        format!(
+            r#"case "$1" in
+  describe) echo '{{"protocol":1,"name":"scr","version":"1","input":"comments","cost":"A","rules":[{rules}]}}' ;;
+  check)
+    cat >/dev/null
+    echo '{{"protocol":1,"findings":[{{"rule":"new","path":"a.py","comment":0,"message":"m"}}]}}' ;;
+esac
+"#
+        )
+    };
+    std::fs::write(&script, body(r#"{"id":"old","default_level":"warning"}"#)).expect("v1");
+    s.user_config(&format!(
+        "[slop.plugins.scr]\ncommand = [\"sh\", \"{}\"]\n",
+        script.display()
+    ));
+    s.write("a.py", "# a comment\nx = 1\n");
+    let (_, v, _) = s.scan();
+    assert!(
+        !v["findings"]
+            .as_array()
+            .is_some_and(|fs| fs.iter().any(|f| f["rule"] == "scr/new")),
+        "v1 does not declare `new`: {v}"
+    );
+
+    // Same length, newer mtime, a new rule: only the script path in argv
+    // carries the change.
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    std::fs::write(&script, body(r#"{"id":"new","default_level":"warning"}"#)).expect("v2");
+    let (_, v, _) = s.scan();
+    assert!(
+        v["findings"]
+            .as_array()
+            .is_some_and(|fs| fs.iter().any(|f| f["rule"] == "scr/new")),
+        "v2 declares `new`; a stale manifest dropped it: {v}"
+    );
+}
+
+/// The plugin sees `stage = "check"` from `agent-slop check`, `scan` from
+/// scan, and `hook` from the `PostToolUse` leg.
+#[test]
+fn the_stage_in_the_request_names_the_command() {
+    let s = Scratch::new("stage");
+    let seen = s.root.join("stage.txt");
+    s.write_plugin(
+        "stg-slop",
+        &format!(
+            r#"#!/bin/sh
+case "$1" in
+  describe) echo '{{"protocol":1,"name":"stg","version":"1","input":"comments","cost":"A","rules":[{{"id":"r","default_level":"warning"}}]}}' ;;
+  check) input=$(cat); printf '%s\n' "$(printf '%s' "$input" | sed 's/.*"stage":"\([a-z]*\)".*/\1/')" >> {seen}; echo '{{"protocol":1,"findings":[]}}' ;;
+esac
+"#,
+            seen = seen.display()
+        ),
+    );
+    s.user_config("[slop.plugins.stg]\ncommand = [\"stg-slop\"]\n");
+    s.write("a.py", "# a comment\nx = 1\n");
+    let _ = s.run(&["scan", "--format", "json"]);
+    let _ = s.run(&["check", "a.py"]);
+    let _ = run_hook(&s, HOOK_PAYLOAD);
+    let stages = std::fs::read_to_string(&seen).expect("the plugin ran");
+    assert_eq!(
+        stages.lines().collect::<Vec<_>>(),
+        ["scan", "check", "hook"],
+        "{stages}"
+    );
+}
+
+/// `--deadline-ms` bounds the sum of plugin calls, not each one: three
+/// slow plugins under a 1 s deadline may not cost three budgets.
+#[test]
+fn plugin_budgets_share_the_scans_deadline() {
+    let s = Scratch::new("deadline");
+    s.user_config(&three_slow_plugins(&s, 900));
+    s.write("a.py", RULE_1);
+    let started = std::time::Instant::now();
+    let (_, v, _) = s.scan_args(&["--deadline-ms", "1200"]);
+    let took = started.elapsed();
+    assert!(
+        took < std::time::Duration::from_millis(2400),
+        "three 900 ms budgets under a 1200 ms deadline took {took:?}: {v}"
+    );
+}
+
+/// Installs `aa`, `bb` and `cc` plugins that hang in `check` and returns
+/// the user config declaring them with `timeout_ms`.
+fn three_slow_plugins(s: &Scratch, timeout_ms: u64) -> String {
+    use std::fmt::Write;
+    let mut config = String::new();
+    for n in ["aa", "bb", "cc"] {
+        s.write_plugin(&format!("{n}-slop"), &slow_plugin(n));
+        let _ = write!(
+            config,
+            "[slop.plugins.{n}]\ncommand = [\"{n}-slop\"]\ntimeout_ms = {timeout_ms}\n\n"
+        );
+    }
+    config
+}
+
+fn slow_plugin(name: &str) -> String {
+    format!(
+        r#"#!/bin/sh
+case "$1" in
+  describe) echo '{{"protocol":1,"name":"{name}","version":"1","input":"comments","cost":"A","rules":[{{"id":"x","default_level":"warning"}}]}}' ;;
+  check) sleep 30 ;;
+esac
+"#
+    )
+}
+
+/// The hook's 300 ms ceiling is for the whole leg: three slow cost-A
+/// plugins may not add up to three ceilings on the model's path.
+#[test]
+fn the_hook_ceiling_covers_every_plugin_together() {
+    let s = Scratch::new("hook-sum");
+    s.user_config(&three_slow_plugins(&s, 2000));
+    s.write("a.py", RULE_1);
+    let started = std::time::Instant::now();
+    let (code, _, err) = run_hook(&s, HOOK_PAYLOAD);
+    let took = started.elapsed();
+    assert_eq!(code, 0, "{err}");
+    assert!(
+        took < std::time::Duration::from_millis(700),
+        "three plugins under one 300 ms ceiling took {took:?}: {err}"
+    );
+}
+
+/// Normalisation is bounded by the finding cap and the budget, not by
+/// findings × file size: a plugin that floods thousands of findings over a
+/// big file costs the host a bounded amount.
+#[test]
+fn a_flood_of_findings_is_truncated_before_normalising() {
+    let s = Scratch::new("flood");
+    s.write_plugin(
+        "flood-slop",
+        r#"#!/bin/sh
+case "$1" in
+  describe) echo '{"protocol":1,"name":"flood","version":"1","input":"comments","cost":"A","rules":[{"id":"r","default_level":"warning"}]}' ;;
+  check)
+    cat >/dev/null
+    printf '{"protocol":1,"findings":['
+    i=0
+    while [ $i -lt 20000 ]; do
+      [ $i -gt 0 ] && printf ','
+      printf '{"rule":"r","path":"a.py","comment":%s,"message":"m"}' $((i % 300))
+      i=$((i+1))
+    done
+    printf ']}'
+    ;;
+esac
+"#,
+    );
+    s.user_config("[slop.plugins.flood]\ncommand = [\"flood-slop\"]\ntimeout_ms = 5000\n");
+    let big = "# a comment\nx = 1\n".repeat(300);
+    s.write("a.py", &big);
+    let started = std::time::Instant::now();
+    let (_, v, _) = s.scan_args(&["--deadline-ms", "8000"]);
+    let took = started.elapsed();
+    assert!(
+        v["skipped"]
+            .as_array()
+            .is_some_and(|sk| sk.iter().any(|x| x["tool"] == "flood"
+                && x["reason"]
+                    .as_str()
+                    .is_some_and(|r| r.starts_with("truncated at 5000")))),
+        "{v}"
+    );
+    let n = v["findings"]
+        .as_array()
+        .map_or(0, |fs| fs.iter().filter(|f| f["rule"] == "flood/r").count());
+    assert!(n <= 5000, "{n} findings kept");
+    assert!(
+        took < std::time::Duration::from_secs(6),
+        "normalising a capped flood took {took:?}"
+    );
 }

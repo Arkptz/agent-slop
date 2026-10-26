@@ -9,7 +9,7 @@ pub mod runner;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use agent_slop_core::config::{ResolvedConfig, ResolvedPlugin, RuleLevel};
 use agent_slop_core::finding::{Finding, Severity, Source, fingerprint};
@@ -93,8 +93,10 @@ impl Selection {
 }
 
 /// Manifests cached under `$XDG_CACHE_HOME/agent-slop/plugins/`, keyed by
-/// the command line and the resolved executable's size and mtime, so a
-/// plugin upgrade or a changed argument is a new key.
+/// the command line plus the size and mtime of every argv element that
+/// resolves to an existing file (the executable and, for an interpreter
+/// argv, the script), so a plugin upgrade or a changed argument is a new
+/// key.
 #[derive(Debug, Clone, Default)]
 pub struct DescribeCache {
     dir: Option<PathBuf>,
@@ -115,22 +117,27 @@ impl DescribeCache {
         Self::at(base.map(|b| b.join("agent-slop").join("plugins")))
     }
 
-    fn key(command: &[String]) -> Option<String> {
-        let exe = resolve_exe(command.first()?)?;
-        let meta = std::fs::metadata(&exe).ok()?;
-        let mtime = meta
-            .modified()
-            .ok()
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map_or(0, |d| d.as_nanos());
+    fn key(command: &[String]) -> String {
         let mut hasher = blake3::Hasher::new();
         for part in command {
             hasher.update(part.as_bytes());
             hasher.update(b"\0");
+            // An interpreter argv (`["sh", "/path/plugin.sh"]`) runs code
+            // from every argv element that is a file, so each one's size
+            // and mtime joins the key: editing or upgrading any of them
+            // must invalidate the cached manifest.
+            if let Some(meta) = resolve_exe(part).and_then(|p| std::fs::metadata(p).ok()) {
+                let mtime = meta
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map_or(0, |d| d.as_nanos());
+                hasher.update(b"f");
+                hasher.update(&meta.len().to_le_bytes());
+                hasher.update(&mtime.to_le_bytes());
+            }
         }
-        hasher.update(&meta.len().to_le_bytes());
-        hasher.update(&mtime.to_le_bytes());
-        Some(hasher.finalize().to_hex()[..32].to_string())
+        hasher.finalize().to_hex()[..32].to_string()
     }
 
     fn describe(
@@ -140,11 +147,7 @@ impl DescribeCache {
         budget: Duration,
     ) -> Result<Manifest, String> {
         let key = Self::key(&plugin.command);
-        let path = self
-            .dir
-            .as_ref()
-            .zip(key.as_ref())
-            .map(|(d, k)| d.join(format!("{k}.json")));
+        let path = self.dir.as_ref().map(|d| d.join(format!("{key}.json")));
         if let Some(path) = &path
             && let Some(hit) = std::fs::read_to_string(path)
                 .ok()
@@ -179,12 +182,14 @@ fn resolve_exe(program: &str) -> Option<PathBuf> {
 }
 
 /// One host invocation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct Opts<'a> {
     pub selection: &'a Selection,
     pub stage: Stage,
-    /// Milliseconds left on the caller's deadline, if it has one.
-    pub left_ms: Option<u64>,
+    /// The caller's whole-command deadline, if it has one. Recomputed
+    /// before every call: what one plugin spends, the next one does not
+    /// get again.
+    pub deadline: Option<Instant>,
 }
 
 /// The host's result for one invocation.
@@ -237,58 +242,47 @@ pub fn run(
     cache: &DescribeCache,
 ) -> PluginRun {
     let mut result = PluginRun::default();
+    let started = Instant::now();
+    // The hook's ceiling is cumulative: every plugin and every call shares
+    // it, so N plugins cannot cost N times 300 ms on the model's path.
+    let hook_cutoff = (opts.stage == Stage::Hook)
+        .then(|| started.checked_add(Duration::from_millis(HOOK_BUDGET_MS)))
+        .flatten();
+    let stop = [opts.deadline, hook_cutoff].into_iter().flatten().min();
     for (name, plugin) in &cfg.plugins {
         if !plugin.enable || !opts.selection.selects(name) {
             continue;
         }
-        let mut budget_ms = opts.left_ms.map_or(plugin.timeout_ms, |left| {
-            plugin.timeout_ms.min(left.saturating_sub(MIN_BUDGET_MS))
-        });
-        if opts.stage == Stage::Hook {
-            budget_ms = budget_ms.min(HOOK_BUDGET_MS);
-        }
-        if budget_ms < MIN_BUDGET_MS {
+        let Some(budget) = budget_for(plugin, opts.deadline, hook_cutoff) else {
             result.skip(name, "deadline");
             continue;
-        }
-        let budget = Duration::from_millis(budget_ms);
+        };
 
-        let manifest = match cache.describe(plugin, repo_root, budget) {
+        let manifest = match describe_and_check(cache, plugin, repo_root, budget, name, opts) {
             Ok(m) => m,
             Err(reason) => {
                 result.skip(name, reason);
                 continue;
             }
         };
-        if !agent_slop_protocol::is_supported(manifest.protocol) {
-            result.skip(
-                name,
-                format!(
-                    "protocol-mismatch (host speaks {}, plugin {})",
-                    agent_slop_protocol::PROTOCOL_VERSION,
-                    manifest.protocol
-                ),
-            );
-            continue;
-        }
-        if manifest.name != *name {
-            result.skip(
-                name,
-                format!("name-mismatch (manifest says `{}`)", manifest.name),
-            );
-            continue;
-        }
-        if !cost_allows(manifest.cost, opts.stage, opts.selection.names(name)) {
-            result.skip(name, "cost");
-            continue;
-        }
 
-        let mine = targets_for(&manifest, targets);
+        let mine = parse_targets(&manifest, targets);
         if mine.is_empty() {
             result.skip(name, "no-targets");
             continue;
         }
-        let request = build_request(&manifest, opts.stage, repo_root, &mine, plugin, budget_ms);
+        // What `describe` spent is gone: the check call gets what is left.
+        let Some(budget) = budget_for(plugin, opts.deadline, hook_cutoff) else {
+            result.skip(name, "deadline");
+            continue;
+        };
+        let request = build_request(
+            opts.stage,
+            repo_root,
+            &mine,
+            plugin,
+            u64::try_from(budget.as_millis()).unwrap_or(u64::MAX),
+        );
         let Ok(payload) = serde_json::to_vec(&request) else {
             result.skip(name, "bad-request");
             continue;
@@ -301,7 +295,7 @@ pub fn run(
                 continue;
             }
         };
-        let Ok(response) = serde_json::from_slice::<Response>(&stdout) else {
+        let Ok(mut response) = serde_json::from_slice::<Response>(&stdout) else {
             result.skip(name, "bad-response");
             continue;
         };
@@ -310,20 +304,24 @@ pub fn run(
             continue;
         }
 
-        let (mut found, dropped) = normalize(cfg, name, &manifest, repo_root, &mine, &response);
-        if found.len() > MAX_FINDINGS {
-            found.truncate(MAX_FINDINGS);
+        // Truncate BEFORE normalising: the cap is the bound on host work.
+        let truncated = response.findings.len() > MAX_FINDINGS;
+        response.findings.truncate(MAX_FINDINGS);
+        if truncated {
             result.skipped.push(Skipped {
                 tool: name.clone(),
                 reason: format!("truncated at {MAX_FINDINGS} findings"),
             });
         }
-        let status = if dropped == 0 {
-            "ok".to_string()
-        } else {
-            format!("ok ({dropped} findings dropped: undeclared rule, foreign path or bad index)")
-        };
-        result.status.insert(name.clone(), status);
+        let (mut found, status) =
+            normalize(cfg, name, &manifest, repo_root, &mine, &response, stop);
+        if status.partial {
+            result.skipped.push(Skipped {
+                tool: name.clone(),
+                reason: "deadline".to_string(),
+            });
+        }
+        result.status.insert(name.clone(), status.text());
         if manifest.input == Input::Comments && manifest.deterministic {
             result.attributable.insert(name.clone());
         }
@@ -332,12 +330,91 @@ pub fn run(
     result
 }
 
-/// The files a manifest wants: `langs` for comment plugins (empty = every
-/// language the scanner knows), `exts` for file plugins.
-fn targets_for<'a>(
-    manifest: &Manifest,
-    targets: &'a [(String, String)],
-) -> Vec<&'a (String, String)> {
+/// Describe the plugin and accept its manifest: protocol spoken, the name
+/// matches the configured key, and the cost class may run at this stage.
+/// `Err` is a skip reason.
+fn describe_and_check(
+    cache: &DescribeCache,
+    plugin: &ResolvedPlugin,
+    repo_root: &Path,
+    budget: Duration,
+    name: &str,
+    opts: &Opts<'_>,
+) -> Result<Manifest, String> {
+    let manifest = cache.describe(plugin, repo_root, budget)?;
+    if !agent_slop_protocol::is_supported(manifest.protocol) {
+        return Err(format!(
+            "protocol-mismatch (host speaks {}, plugin {})",
+            agent_slop_protocol::PROTOCOL_VERSION,
+            manifest.protocol
+        ));
+    }
+    if manifest.name != name {
+        return Err(format!("name-mismatch (manifest says `{}`)", manifest.name));
+    }
+    if !cost_allows(manifest.cost, opts.stage, opts.selection.names(name)) {
+        return Err("cost".to_string());
+    }
+    Ok(manifest)
+}
+
+/// How a normalisation pass ended, for the status map.
+struct NormStatus {
+    dropped: usize,
+    /// The deadline cut the pass short.
+    partial: bool,
+}
+
+impl NormStatus {
+    fn text(&self) -> String {
+        if self.partial {
+            "ok (partial: deadline reached while normalising)".to_string()
+        } else if self.dropped == 0 {
+            "ok".to_string()
+        } else {
+            format!(
+                "ok ({} findings dropped: undeclared rule, foreign path or bad index)",
+                self.dropped
+            )
+        }
+    }
+}
+
+/// The time one call of `plugin` may take: `timeout_ms`, capped by what is
+/// left of the caller's deadline less [`MIN_BUDGET_MS`] (plan §3.4) and by
+/// what is left of the hook's cumulative ceiling. `None` = not worth
+/// starting.
+fn budget_for(
+    plugin: &ResolvedPlugin,
+    deadline: Option<Instant>,
+    hook_cutoff: Option<Instant>,
+) -> Option<Duration> {
+    let left_ms = |at: Instant| {
+        u64::try_from(at.saturating_duration_since(Instant::now()).as_millis()).unwrap_or(0)
+    };
+    let mut ms = plugin.timeout_ms;
+    if let Some(d) = deadline {
+        ms = ms.min(left_ms(d).saturating_sub(MIN_BUDGET_MS));
+    }
+    if let Some(c) = hook_cutoff {
+        ms = ms.min(left_ms(c));
+    }
+    (ms >= MIN_BUDGET_MS).then(|| Duration::from_millis(ms))
+}
+
+/// A target with its comments extracted once; request building and
+/// normalisation both read it, so a file is parsed once per plugin call
+/// however many findings come back.
+struct Parsed<'a> {
+    path: &'a str,
+    lang: Option<&'static str>,
+    comments: Vec<lang::Comment>,
+    lines: Vec<&'a str>,
+}
+
+/// The files a manifest wants, parsed once: `langs` for comment plugins
+/// (empty = every language the scanner knows), `exts` for file plugins.
+fn parse_targets<'a>(manifest: &Manifest, targets: &'a [(String, String)]) -> Vec<Parsed<'a>> {
     targets
         .iter()
         .filter(|(path, _)| match manifest.input {
@@ -348,42 +425,48 @@ fn targets_for<'a>(
                 .rsplit_once('.')
                 .is_some_and(|(_, ext)| manifest.exts.iter().any(|e| e == ext)),
         })
+        .map(|(path, content)| {
+            let spec = lang::spec_for_path(path);
+            let comments = match (manifest.input, spec) {
+                (Input::Comments, Some(spec)) => lang::extract(spec, content),
+                _ => Vec::new(),
+            };
+            Parsed {
+                path,
+                lang: spec.map(|s| s.name),
+                comments,
+                lines: content.lines().collect(),
+            }
+        })
         .collect()
 }
 
 fn build_request(
-    manifest: &Manifest,
     stage: Stage,
     repo_root: &Path,
-    targets: &[&(String, String)],
+    targets: &[Parsed<'_>],
     plugin: &ResolvedPlugin,
     budget_ms: u64,
 ) -> Request {
     let files = targets
         .iter()
-        .map(|(path, content)| {
-            let spec = lang::spec_for_path(path);
-            let comments = match (manifest.input, spec) {
-                (Input::Comments, Some(spec)) => lang::extract(spec, content)
-                    .into_iter()
-                    .enumerate()
-                    .map(|(index, c)| WireComment {
-                        index,
-                        text: c.text,
-                        line: c.line,
-                        col: c.col,
-                        end_line: c.end_line,
-                        next_code_ids: c.next_code_ids,
-                        is_docstring: c.is_docstring,
-                    })
-                    .collect(),
-                _ => Vec::new(),
-            };
-            RequestFile {
-                path: path.clone(),
-                lang: spec.map_or_else(|| "unknown".to_string(), |s| s.name.to_string()),
-                comments,
-            }
+        .map(|t| RequestFile {
+            path: t.path.to_string(),
+            lang: t.lang.map_or_else(|| "unknown".to_string(), str::to_string),
+            comments: t
+                .comments
+                .iter()
+                .enumerate()
+                .map(|(index, c)| WireComment {
+                    index,
+                    text: c.text.clone(),
+                    line: c.line,
+                    col: c.col,
+                    end_line: c.end_line,
+                    next_code_ids: c.next_code_ids.clone(),
+                    is_docstring: c.is_docstring,
+                })
+                .collect(),
         })
         .collect();
     Request {
@@ -406,18 +489,24 @@ fn normalize(
     plugin: &str,
     manifest: &Manifest,
     repo_root: &Path,
-    targets: &[&(String, String)],
+    targets: &[Parsed<'_>],
     response: &Response,
-) -> (Vec<Finding>, usize) {
-    let by_path: BTreeMap<&str, &str> = targets
-        .iter()
-        .map(|(p, c)| (p.as_str(), c.as_str()))
-        .collect();
+    stop: Option<Instant>,
+) -> (Vec<Finding>, NormStatus) {
+    let by_path: BTreeMap<&str, &Parsed<'_>> = targets.iter().map(|t| (t.path, t)).collect();
     let mut out = Vec::new();
     let mut dropped = 0usize;
+    let mut out_of_time = false;
     for wire in &response.findings {
+        if stop.is_some_and(|stop| Instant::now() >= stop) {
+            // The budget bought what it bought; the rest of the flood is
+            // not normalised (CWE-400: the cap must bound the host work,
+            // and this runs outside any subprocess budget).
+            out_of_time = true;
+            break;
+        }
         let local = normalize_path(&wire.path, repo_root);
-        let (Some(content), Some(decl)) = (
+        let (Some(t), Some(decl)) = (
             by_path.get(local.as_str()).copied(),
             manifest.rules.iter().find(|r| r.id == wire.rule),
         ) else {
@@ -433,16 +522,13 @@ fn normalize(
         };
 
         let located = if manifest.input == Input::Comments {
-            lang::spec_for_path(&local).and_then(|spec| {
-                let comment = lang::extract(spec, content)
-                    .into_iter()
-                    .nth(wire.comment?)?;
-                Some((
+            wire.comment.and_then(|i| t.comments.get(i)).map(|comment| {
+                (
                     comment.line,
                     comment.col,
                     comment.end_line,
                     comment.text.chars().take(512).collect::<String>(),
-                ))
+                )
             })
         } else {
             let snippet = if wire.snippet.is_empty() {
@@ -484,28 +570,38 @@ fn normalize(
             fixable: wire.fixable,
         };
         // Plugins have no native suppression, so ours applies to them.
-        let lines: Vec<&str> = content.lines().collect();
-        agent_slop_core::rules::apply_suppression(&mut finding, &lines);
+        agent_slop_core::rules::apply_suppression(&mut finding, &t.lines);
         out.push(finding);
     }
-    (out, dropped)
+    (
+        out,
+        NormStatus {
+            dropped,
+            partial: out_of_time,
+        },
+    )
 }
 
 /// The shared severity path for imported findings: an explicit
-/// `overrides` entry first, then the plugin's configured severity, capped
-/// at `warning`. `off` reports nothing. A plugin's own `default_level`
-/// only applies when the plugin has no configured severity entry.
+/// `overrides` entry first, then the plugin's configured severity if a
+/// tier set one, else the rule's own `default_level` from the manifest,
+/// capped at `warning`. `off` reports nothing.
 #[must_use]
 pub fn imported_severity(
     cfg: &ResolvedConfig,
     rule_id: &str,
     declared: RuleLevel,
 ) -> Option<Severity> {
-    if let Some(level) = cfg.overrides.get(rule_id) {
+    let overrides = &cfg.overrides;
+    if let Some(level) = overrides.get(rule_id) {
         return level.severity();
     }
     let producer = rule_id.split('/').next().unwrap_or_default();
-    let level = cfg.plugins.get(producer).map_or(declared, |p| p.severity);
+    let level = cfg
+        .plugins
+        .get(producer)
+        .and_then(|p| p.severity)
+        .unwrap_or(declared);
     let base = level.severity()?;
     Some(if base == Severity::Error {
         Severity::Warning

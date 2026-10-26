@@ -160,6 +160,7 @@ fn run_check(files: &[String]) -> ExitCode {
     let args = ScanArgs {
         paths: files.to_vec(),
         linters: Some("none".to_string()),
+        stage: cli::Stage::Check,
         ..ScanArgs::default()
     };
     let report = scan::run(&cfg, &args, &cwd, false);

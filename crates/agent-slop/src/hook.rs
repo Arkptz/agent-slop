@@ -350,9 +350,6 @@ fn hook_plugins(
         return agent_slop_integrations::plugins::PluginRun::default();
     }
     let root = Repo::discover(cwd).map_or_else(|| cwd.to_path_buf(), |r| r.root);
-    let left_ms = leg_deadline.map(|d| {
-        u64::try_from(d.saturating_duration_since(Instant::now()).as_millis()).unwrap_or(0)
-    });
     // The path as the plugin sees it is repo-relative; the hook payload may
     // hand an absolute one.
     let named = std::path::Path::new(rel)
@@ -363,7 +360,7 @@ fn hook_plugins(
         &Opts {
             selection: &Selection::Auto,
             stage: Stage::Hook,
-            left_ms,
+            deadline: leg_deadline,
         },
         &root,
         &[(named, content.to_string())],

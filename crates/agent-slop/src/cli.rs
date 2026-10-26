@@ -104,6 +104,18 @@ pub(crate) struct ScanArgs {
     pub max_verdicts: Option<usize>,
     pub emit_telemetry: bool,
     pub telemetry_root: Option<PathBuf>,
+    /// `Check` for `agent-slop check`, so plugins see `stage = "check"`.
+    pub stage: Stage,
+}
+
+/// The command a [`ScanArgs`] was built for; plugins see it as `stage`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum Stage {
+    /// `agent-slop scan` and every default-constructed set (tests).
+    #[default]
+    Scan,
+    /// `agent-slop check`.
+    Check,
 }
 
 pub(crate) enum Cli {

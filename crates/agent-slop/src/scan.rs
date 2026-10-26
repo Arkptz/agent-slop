@@ -17,6 +17,7 @@ use agent_slop_core::finding::{Finding, Severity};
 use agent_slop_core::rules::scan_source;
 use agent_slop_integrations::judge;
 use agent_slop_integrations::linters::{self, PathIndex, Selection, Skipped, Stage};
+use agent_slop_integrations::plugins::Stage as PluginStage;
 
 pub(crate) struct Report {
     pub findings: Vec<Finding>,
@@ -279,9 +280,6 @@ pub(crate) fn run(cfg: &ResolvedConfig, args: &ScanArgs, cwd: &Path, git: bool) 
         run_linters(cfg, args, &root, &rel_targets);
     findings.extend(linter_findings);
 
-    let left_ms = deadline.map(|d| {
-        u64::try_from(d.saturating_duration_since(Instant::now()).as_millis()).unwrap_or(0)
-    });
     let contents_named: Vec<(String, String)> = targets
         .iter()
         .zip(&contents)
@@ -294,7 +292,11 @@ pub(crate) fn run(cfg: &ResolvedConfig, args: &ScanArgs, cwd: &Path, git: bool) 
             root: &root,
             repo: repo.as_ref(),
             base: base.as_deref(),
-            left_ms,
+            deadline,
+            stage: match args.stage {
+                crate::cli::Stage::Check => PluginStage::Check,
+                crate::cli::Stage::Scan => PluginStage::Scan,
+            },
         },
         &contents_named,
     );
@@ -332,8 +334,8 @@ pub(crate) fn run(cfg: &ResolvedConfig, args: &ScanArgs, cwd: &Path, git: bool) 
 }
 
 /// The plugin host over the scan's named files. `--plugins` mirrors
-/// `--linters`; the stage is always `Scan` here — the Stop gate never runs
-/// plugins. Under `--since`, a deterministic comment plugin also runs over
+/// `--linters`; the stage is `Scan`, or `Check` for `agent-slop check` — the
+/// Stop gate never runs plugins. Under `--since`, a deterministic comment plugin also runs over
 /// the changed files as they were at the base, so its inherited findings
 /// sit in the baseline instead of counting as added (D3's spirit).
 fn run_plugins(
@@ -342,15 +344,15 @@ fn run_plugins(
     ctx: &PluginCtx<'_>,
     contents: &[(String, String)],
 ) -> agent_slop_integrations::plugins::PluginRun {
-    use agent_slop_integrations::plugins::{DescribeCache, Opts, Selection, Stage, run};
+    use agent_slop_integrations::plugins::{DescribeCache, Opts, Selection, run};
     let selection = plugins_arg.map_or(Selection::Auto, Selection::parse);
     let cache = DescribeCache::from_env();
     let mut plugins = run(
         cfg,
         &Opts {
             selection: &selection,
-            stage: Stage::Scan,
-            left_ms: ctx.left_ms,
+            stage: ctx.stage,
+            deadline: ctx.deadline,
         },
         ctx.root,
         contents,
@@ -368,8 +370,8 @@ fn run_plugins(
             cfg,
             &Opts {
                 selection: &narrow,
-                stage: Stage::Scan,
-                left_ms: ctx.left_ms,
+                stage: ctx.stage,
+                deadline: ctx.deadline,
             },
             ctx.root,
             &blobs,
@@ -385,7 +387,8 @@ struct PluginCtx<'a> {
     root: &'a Path,
     repo: Option<&'a Repo>,
     base: Option<&'a str>,
-    left_ms: Option<u64>,
+    deadline: Option<Instant>,
+    stage: PluginStage,
 }
 
 /// The ratchet: multiset difference against the baseline, with the

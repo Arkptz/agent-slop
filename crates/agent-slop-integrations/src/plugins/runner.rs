@@ -4,11 +4,14 @@
 //! No new dependencies. Stdin is written and stdout/stderr are drained on
 //! their own threads so a plugin that floods a pipe cannot deadlock the
 //! host; the main thread polls `try_wait` every 5 ms and kills the child
-//! when the budget runs out. Results come back over a channel with a
-//! deadline, never a join, so a grandchild that inherited the pipe cannot
-//! hold the host past its budget.
+//! when the budget runs out. The child gets its own process group, so that
+//! kill takes its forked helpers with it (a plugin that outlives its
+//! budget must not leave a tree behind). Results come back over a channel
+//! with a deadline, never a join, so a grandchild that inherited the pipe
+//! cannot hold the host past its budget.
 
 use std::io::{Read, Write};
+use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::Arc;
@@ -50,6 +53,7 @@ pub fn run_process(
         .arg(subcommand)
         .current_dir(cwd)
         .env_clear()
+        .process_group(0)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -118,6 +122,8 @@ pub fn run_process(
 
     let left = budget.saturating_sub(started.elapsed());
     let Ok(stdout) = rx.recv_timeout(left.max(POLL)) else {
+        // The child exited but a helper of its group still holds stdout.
+        kill_group(child.id());
         return Err("timeout".to_string());
     };
     if oversize.load(Ordering::SeqCst) || stdout.len() > MAX_STDOUT {
@@ -132,7 +138,21 @@ pub fn run_process(
     Ok(stdout)
 }
 
+/// SIGKILL the process group the plugin leads (`process_group(0)` made its
+/// pid the group id). A group with no members left is a harmless ESRCH.
+fn kill_group(pgid: u32) {
+    if let Some(pgid) = i32::try_from(pgid)
+        .ok()
+        .and_then(rustix::process::Pid::from_raw)
+    {
+        let _ = rustix::process::kill_process_group(pgid, rustix::process::Signal::KILL);
+    }
+}
+
+/// Kill the plugin's whole group, then the child itself (a no-op once the
+/// group signal took it), and reap it.
 fn kill(child: &mut std::process::Child) {
+    kill_group(child.id());
     let _ = child.kill();
     let _ = child.wait();
 }
