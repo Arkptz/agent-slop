@@ -637,6 +637,20 @@ mod tests {
         );
         assert!(!fires("# GPT-6 Luna"));
         assert!(!fires("# no ids here at all"));
+        // Plan and review markers (P3-3, W2-1) are session-local: with a
+        // full sentence they are a citation like any id; alone they fire
+        // wherever they stand — trailing parens, leading parens or a
+        // leading marker-colon.
+        assert!(fires("# see P3-3"));
+        assert!(!fires("# P3-3: retry budget."));
+        assert!(fires("# (P3-3) retry budget."));
+        assert!(!fires(
+            "# Бюджет худшей доставки: все попытки и паузы между ними (P3-3)."
+        ));
+        // Product and metric names are not plans (stopwords).
+        assert!(!fires("# Pin A4-2 paper size in the print layout."));
+        assert!(!fires("# Use the P99-2 percentile dashboard."));
+        assert!(!fires("# IPv6 requires the D2-4 dual-stack test."));
     }
 
     #[test]

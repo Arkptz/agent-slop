@@ -9,7 +9,7 @@ severity = "warning"
 # Fires when the comment has an id and fewer than this many words of its own.
 min_comment_words = 4
 # Uppercase-dash-number tokens that name standards or encodings, not docs.
-stopwords = ["UTF", "SHA", "ISO", "RFC", "CVE", "PEP", "HTTP", "TLS", "AES", "MD", "IPV", "X", "BT", "ECMA", "IEEE", "WCAG", "RS"]
+stopwords = ["UTF", "SHA", "ISO", "RFC", "CVE", "PEP", "HTTP", "TLS", "AES", "MD", "IPV", "X", "BT", "ECMA", "IEEE", "WCAG", "RS", "A4", "P99", "D2"]
 
 [exception]
 shape = "An id inside a sentence that already states the rule in its own words ('keys are Fernet-encrypted at rest (ADR-003)')."

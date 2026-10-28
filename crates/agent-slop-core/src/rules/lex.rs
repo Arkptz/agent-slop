@@ -192,16 +192,55 @@ pub fn bare_reference(section: &MatchSection, text: &str) -> Option<String> {
         .split(|c: char| !(c.is_alphanumeric() || c == '-' || c == '_'))
         .filter(|t| !t.is_empty())
         .collect();
-    let id = tokens.iter().find(|t| is_id(t))?;
+    // M-01:-style review-finding labels belong to review-jargon (the
+    // anchored label: marker); bare-reference takes the shapes that rule
+    // does not reach: parenthesised or free-standing plan markers.
+    let is_plan = |tok: &str| {
+        is_plan_marker(tok)
+            && !section.stopwords.iter().any(|s| tok.starts_with(s))
+            && !clean.contains(&format!("{tok}:"))
+    };
+    let id = tokens.iter().find(|t| is_id(t) || is_plan(t))?;
     // Words outside the parenthesis group the id sits in; the id can close
     // any line of a multi-line block, so strip the parenthesised groups
-    // instead of cutting the text at the first one.
+    // instead of cutting the text at the first one. A plan marker is held
+    // to the same bar as a tracker id: a marker plus a full sentence is a
+    // citation, a marker alone is session residue.
     let words = tokens
         .iter()
-        .filter(|t| !is_id(t) && t.chars().filter(|c| c.is_alphabetic()).count() > 1)
+        .filter(|t| !is_id(t) && !is_plan(t))
+        .filter(|t| alphabetic_len(t) > 1)
         .filter(|t| !inside_parens(t, &clean))
         .count();
     (words < section.min_comment_words.unwrap_or(4)).then(|| id.to_string())
+}
+
+/// A plan or review marker: `P3-3`, `W2-1` — a numbered section of a
+/// working document rather than a durable tracker id. The doc it names is
+/// session-local, so the marker rots when the session ends and never buys
+/// the "say it in words" pass a real tracker id can earn. Two letters in
+/// the prefix (`A4-2` is a paper size) or a two-plus-digit tail on a
+/// two-plus-char prefix (`P99-2`, `RTX-50`) name a product or metric, not
+/// a plan: the first group stays, the second is left to product talk.
+#[must_use]
+pub fn is_plan_marker(tok: &str) -> bool {
+    let Some((prefix, num)) = tok.split_once('-') else {
+        return false;
+    };
+    let mut chars = prefix.chars();
+    let one_letter =
+        matches!(chars.next(), Some(c) if c.is_ascii_uppercase()) && chars.next().is_none();
+    let letter_digits = prefix.len() >= 2
+        && prefix.starts_with(|c: char| c.is_ascii_uppercase())
+        && prefix[1..].chars().all(|c: char| c.is_ascii_digit());
+    (one_letter || letter_digits)
+        && !num.is_empty()
+        && num.chars().all(|c: char| c.is_ascii_digit())
+}
+
+/// Letters in a token, ignoring digits and punctuation.
+fn alphabetic_len(t: &str) -> usize {
+    t.chars().filter(|c| c.is_alphabetic()).count()
 }
 
 /// True when `tok` occurs in `text` only inside a parenthesis group.
