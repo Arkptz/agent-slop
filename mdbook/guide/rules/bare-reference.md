@@ -80,3 +80,13 @@ bare-reference = "off"   # error | warning | hint | off
 ```
 
 Use the comment marker of the file's language (`#`, `//`, `--`, `;`, `/*`). See [Suppressions](../suppressions.md).
+
+## Plan and review markers
+
+`P3-3`, `W2-1` and other one-or-two-character section ids name a plan or
+review round that no longer exists once the session ends. They are judged
+by the same bar as tracker ids: surrounded by a full sentence the marker is
+a citation; standing alone (or in trailing parens with a stub) it is
+session residue and fires. Review-finding labels with a colon (`M-01:`)
+belong to `slop/review-jargon` instead, and product or metric shapes
+(`A4-2` paper, `P99-2` percentile, `D2-4`) are exempt as stopwords.
