@@ -4,7 +4,7 @@ members = ["crates/*"]
 
 # Shared package metadata — member crates inherit with `field.workspace = true`.
 [workspace.package]
-version = "1.0.0"
+version = "1.1.0"
 edition = "2024"
 rust-version = "1.95"
 license = "MIT OR Apache-2.0"
@@ -17,8 +17,8 @@ categories = ["development-tools", "command-line-utilities"]
 # Single place for cross-crate dependency versions. Members reference these with
 # `dep.workspace = true` so the whole workspace stays on one version.
 [workspace.dependencies]
-agent-slop-core = { path = "crates/agent-slop-core", version = "=1.0.0" }
-agent-slop-integrations = { path = "crates/agent-slop-integrations", version = "=1.0.0" }
+agent-slop-core = { path = "crates/agent-slop-core", version = "=1.1.0" }
+agent-slop-integrations = { path = "crates/agent-slop-integrations", version = "=1.1.0" }
 agent-slop-protocol = { path = "crates/agent-slop-protocol", version = "1" }
 # The ast-grep API changes between minor releases; bumps are deliberate.
 ast-grep-core = "=0.45.3"
