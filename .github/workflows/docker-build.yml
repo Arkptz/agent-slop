@@ -9,7 +9,8 @@ on:
   pull_request:
   workflow_dispatch:
 
-# Least-privilege: packages:write to push to GHCR; NO id-token:write (F12 fix).
+# F12: id-token stays off — nothing in this workflow should mint OIDC
+# credentials.
 permissions:
   contents: read
   packages: write
@@ -105,26 +106,6 @@ jobs:
           provenance: ${{ github.event_name != 'pull_request' && 'mode=max' || 'false' }}
           sbom: false
 
-  # On a v* tag, publish a GitHub Release. Gated behind build_push so the release
-  # only appears once the semver-tagged images are actually in GHCR.
-  release:
-    name: GitHub Release
-    needs: build_push
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: write
-    steps:
-      - name: Create GitHub Release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          TAG: ${{ github.ref_name }}
-        run: |
-          IMAGE_REPO=$(printf '%s' "$REPO" | tr '[:upper:]' '[:lower:]')
-          gh release create "$TAG" \
-            --repo "$REPO" \
-            --title "$TAG" \
-            --generate-notes \
-            --notes "Images published to \`ghcr.io/${IMAGE_REPO}\` at tag \`${TAG#v}\` (one per matrix suffix — see the workflow's image tags)."
+  # Docker images publish to GHCR only; the GitHub Release is owned by
+  # release.yml on the same tag — a second `gh release create` here races
+  # it to HTTP 422 "tag_name already exists".
